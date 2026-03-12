@@ -1,21 +1,22 @@
 ---
 tags: [claude-memory, project]
-summary: Context command uses bidirectional BFS with convergence scoring — BM25 seeds, forward/backlink expansion, score-based budget
+summary: Context uses PPR + Steiner hybrid — BM25 seeds, PageRank clustering, Steiner tree pruning to minimum subgraph
 ---
 # Graph Traversal Algorithm
 
-## Current Implementation
-- BM25 seeds (FTS5) with normalized scores
-- Forward links from seeds: score * 0.5 decay
-- Backlinks to seeds: score * 0.4 decay
-- Notes reachable from multiple seeds accumulate score (convergence)
-- Hub notes excluded from expansion
-- Budget-aware output: seeds get full content, others get summary
+## Implementation (PPR + Steiner Hybrid)
+1. BM25 seeds via FTS5 with porter stemming and column weighting
+2. Personalized PageRank (alpha=0.3, 10 iterations) — degree-normalized random walk with restart on seeds
+3. Top-K PPR candidates passed to Steiner tree approximation
+4. Steiner prunes to minimum subgraph connecting seeds — drops dangling notes
+5. Budget-aware output: seeds get full content, non-seeds get summary only
 
-## Future Options Discussed
-- Personalized PageRank (PPR): random walk with restart, better for 200+ note vaults
-- Spreading activation: single-pass charge propagation with degree normalization
-- TF-IDF seed improvement: already achieved via FTS5 BM25
+## Key Properties
+- Degree normalization dampens hubs automatically (no special-casing needed)
+- Convergence: notes reachable from multiple seeds accumulate PPR score
+- Alpha controls cluster tightness (0.3 = tight, 0.1 = broad)
+- Graceful degradation: on small/empty vaults, collapses to just returning seeds
+- 44 unit tests covering edge cases, cluster separation, performance
 
 ## Links
 - [[sqlite-engine-migration]]
