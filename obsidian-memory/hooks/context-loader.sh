@@ -126,6 +126,19 @@ if echo "$RESULTS" | grep -q "^## "; then
   echo "$RESULTS"
 fi
 
+# --- Always inject write config so Claude can save without CLAUDE.md instructions ---
+echo ""
+echo "--- Obsidian Memory Config ---"
+echo "MEM=${MEM}"
+echo "export CLAUDE_MEMORY_VAULT=\"${VAULT}\""
+echo "Save:   CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM write \"<path>\" \"<content>\""
+echo "Append: CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM append \"<path>\" \"<content>\""
+echo "Link:   CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM link \"<from>\" \"<to>\""
+echo "Search: CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM search \"<query>\""
+echo "One decision per note. Link related decisions with [[wikilinks]]. Add summary: to frontmatter."
+echo "Ask user before saving. Never run \$MEM init."
+echo "--- End Config ---"
+
 # After enough exchanges, remind Claude to offer saving
 if [ "$COUNT" -ge "$SAVE_REMINDER_THRESHOLD" ] && [ $((COUNT % SAVE_REMINDER_THRESHOLD)) -eq 0 ]; then
   echo ""

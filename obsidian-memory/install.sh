@@ -27,6 +27,29 @@ HOOKS_PATH=""
 COMMAND="install"
 INIT_VAULT_PATH=""
 
+# Append memory instructions to a CLAUDE.md file
+append_claude_md() {
+  local claude_md="$1"
+  local memory_marker="## Obsidian Memory"
+
+  if [ -f "$claude_md" ] && grep -qF "$memory_marker" "$claude_md" 2>/dev/null; then
+    echo "CLAUDE.md already has memory instructions, skipping."
+    return
+  fi
+
+  echo "Adding memory instructions to CLAUDE.md..."
+  if [ -f "$claude_md" ]; then
+    printf '\n' >> "$claude_md"
+  fi
+  cat >> "$claude_md" << CLAUDEEOF
+
+${memory_marker}
+
+This project uses obsidian-memory for persistent context across conversations. A global \`UserPromptSubmit\` hook automatically loads relevant memory and injects write commands on every prompt. See the "Obsidian Memory Config" block in hook output for available commands.
+CLAUDEEOF
+  echo "  Updated $claude_md"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     update)
@@ -70,57 +93,14 @@ if [ "$COMMAND" = "init-vault" ]; then
   PROJECT_ROOT="$(cd "$INIT_VAULT_PATH" && pwd)"
   VAULT_DIR="${PROJECT_ROOT}/.claude/memory"
   CLAUDE_MD="${PROJECT_ROOT}/CLAUDE.md"
-  MEMORY_MARKER="## Obsidian Memory"
 
   echo "=== obsidian-memory init-vault ==="
   echo ""
   echo "Project: ${PROJECT_ROOT}"
   echo ""
 
-  # Initialize vault
   CLAUDE_MEMORY_VAULT="$VAULT_DIR" "${SCRIPT_DIR}/bin/obsidian-memory.sh" init
-
-  # Add CLAUDE.md instructions
-  if [ -f "$CLAUDE_MD" ] && grep -qF "$MEMORY_MARKER" "$CLAUDE_MD" 2>/dev/null; then
-    echo "CLAUDE.md already has memory instructions, skipping."
-  else
-    echo "Adding memory instructions to CLAUDE.md..."
-    if [ -f "$CLAUDE_MD" ]; then
-      printf '\n' >> "$CLAUDE_MD"
-    fi
-    cat >> "$CLAUDE_MD" << CLAUDEEOF
-
-${MEMORY_MARKER}
-
-This project uses obsidian-memory for persistent context across conversations.
-
-**Setup (run at conversation start):**
-\`\`\`bash
-MEM=${SCRIPT_DIR}/bin/obsidian-memory.sh
-
-# Resolve vault: project-local first, then global
-if [ -d ".claude/memory" ]; then
-  export CLAUDE_MEMORY_VAULT="\$(pwd)/.claude/memory"
-elif [ -d "\$HOME/.claude/memory" ]; then
-  export CLAUDE_MEMORY_VAULT="\$HOME/.claude/memory"
-fi
-\`\`\`
-
-**Key commands:**
-- \`\$MEM context "<query>"\` — search + follow links + read relevant notes
-- \`\$MEM write "<path>" "<content>"\` — save a new note
-- \`\$MEM append "<path>" "<content>"\` — add to existing note
-- \`\$MEM link "<from>" "<to>"\` — connect notes with wikilinks
-- \`\$MEM search "<query>"\` — find notes by keyword
-
-**When to save:** Architectural decisions (with reasoning), user corrections, project context, workflow preferences, debugging insights worth keeping.
-
-**When NOT to save:** Generic facts, one-off commands, things obvious from the codebase.
-
-**Memory Save Reminder:** When a "Memory Save Reminder" appears in context, ask the user if they'd like to save insights from the session. Do not save automatically — wait for confirmation.
-CLAUDEEOF
-    echo "  Updated $CLAUDE_MD"
-  fi
+  append_claude_md "$CLAUDE_MD"
 
   echo ""
   echo "=== Done ==="
@@ -131,6 +111,8 @@ CLAUDEEOF
   echo "The global hook will auto-discover this vault when working in ${PROJECT_ROOT} or any subdirectory."
   exit 0
 fi
+
+# --- Main install ---
 
 # Derive vault and hooks locations from --hooks-path
 if [ -n "$HOOKS_PATH" ]; then
@@ -211,49 +193,7 @@ else
   CLAUDE_MD="${CLAUDE_DIR}/CLAUDE.md"
 fi
 
-MEMORY_MARKER="## Obsidian Memory"
-
-if [ -f "$CLAUDE_MD" ] && grep -qF "$MEMORY_MARKER" "$CLAUDE_MD" 2>/dev/null; then
-  echo "CLAUDE.md already has memory instructions, skipping."
-else
-  echo "Adding memory instructions to CLAUDE.md..."
-  # Add a newline separator if appending to existing file
-  if [ -f "$CLAUDE_MD" ]; then
-    printf '\n' >> "$CLAUDE_MD"
-  fi
-  cat >> "$CLAUDE_MD" << CLAUDEEOF
-
-${MEMORY_MARKER}
-
-This project uses obsidian-memory for persistent context across conversations.
-
-**Setup (run at conversation start):**
-\`\`\`bash
-MEM=${SCRIPT_DIR}/bin/obsidian-memory.sh
-
-# Resolve vault: project-local first, then global
-if [ -d ".claude/memory" ]; then
-  export CLAUDE_MEMORY_VAULT="\$(pwd)/.claude/memory"
-elif [ -d "\$HOME/.claude/memory" ]; then
-  export CLAUDE_MEMORY_VAULT="\$HOME/.claude/memory"
-fi
-\`\`\`
-
-**Key commands:**
-- \`\$MEM context "<query>"\` — search + follow links + read relevant notes
-- \`\$MEM write "<path>" "<content>"\` — save a new note
-- \`\$MEM append "<path>" "<content>"\` — add to existing note
-- \`\$MEM link "<from>" "<to>"\` — connect notes with wikilinks
-- \`\$MEM search "<query>"\` — find notes by keyword
-
-**When to save:** Architectural decisions (with reasoning), user corrections, project context, workflow preferences, debugging insights worth keeping.
-
-**When NOT to save:** Generic facts, one-off commands, things obvious from the codebase.
-
-**Memory Save Reminder:** When a "Memory Save Reminder" appears in context, ask the user if they'd like to save insights from the session. Do not save automatically — wait for confirmation.
-CLAUDEEOF
-  echo "  Updated $CLAUDE_MD"
-fi
+append_claude_md "$CLAUDE_MD"
 
 # Initialize memory vault
 echo ""

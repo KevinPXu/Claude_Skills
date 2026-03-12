@@ -22,6 +22,11 @@ This memory survives across conversations.
 **Helper script**: `~/Claude_Skills/obsidian-memory/bin/obsidian-memory.sh`
 (Referred to as `$MEM` below)
 
+## How It Works
+
+- A global `UserPromptSubmit` hook (`~/.claude/hooks.json`) runs on every prompt. It auto-discovers the nearest vault by walking up from the working directory, searches for relevant memory context, and injects it into the conversation. It also tracks session length and injects save reminders after sustained conversations or exit signals.
+- The setup block below is for **writing** to memory — the hook handles reading automatically.
+
 ## Vault Resolution
 
 The vault can be project-scoped or global. **Always resolve the vault before any
@@ -30,16 +35,23 @@ memory operation** by running this setup block at the start of a conversation:
 ```bash
 MEM=~/Claude_Skills/obsidian-memory/bin/obsidian-memory.sh
 
-# Use project-local vault if it exists, otherwise fall back to global
-if [ -d ".claude/memory" ]; then
-  export CLAUDE_MEMORY_VAULT="$(pwd)/.claude/memory"
-elif [ -d "$HOME/.claude/memory" ]; then
-  export CLAUDE_MEMORY_VAULT="$HOME/.claude/memory"
-fi
+# Resolve vault: walk up from cwd to find nearest .claude/memory/, fall back to global
+VAULT_SEARCH_DIR="$(pwd)"
+while [ "$VAULT_SEARCH_DIR" != "/" ]; do
+  if [ -d "$VAULT_SEARCH_DIR/.claude/memory" ]; then
+    export CLAUDE_MEMORY_VAULT="$VAULT_SEARCH_DIR/.claude/memory"
+    break
+  fi
+  VAULT_SEARCH_DIR="$(dirname "$VAULT_SEARCH_DIR")"
+done
+export CLAUDE_MEMORY_VAULT="${CLAUDE_MEMORY_VAULT:-$HOME/.claude/memory}"
 ```
 
 Once `CLAUDE_MEMORY_VAULT` is exported, all `$MEM` commands will use the correct vault
 automatically. Do not hardcode vault paths in commands.
+
+**IMPORTANT:** Never run `$MEM init` to create a new vault. If the setup block above
+doesn't find a vault, ask the user — do not create one.
 
 ---
 
@@ -152,10 +164,18 @@ $MEM link "Projects/weather-app.md" "Tools/React.md"
 
 ### Note Format
 
+**Keep notes atomic** — one decision, one pattern, or one concept per note. If a note
+exceeds ~30 lines, split it. The script warns when notes get too large.
+
+Linked notes that aren't direct search hits are loaded as **summaries only** during
+context retrieval. Always include a `summary:` field in frontmatter so linked context
+stays compact.
+
 ```markdown
 ---
 tags: [claude-memory, <category>]
 aliases: [alternate names for search]
+summary: One-line description of what this note captures
 ---
 # Title
 
@@ -168,6 +188,14 @@ aliases: [alternate names for search]
 ## Links
 - [[Related Note]]
 ```
+
+**Example of atomic splitting**: Instead of one "Auth Decisions" note with JWT choice,
+session storage approach, and token refresh strategy, create three notes:
+- `Decisions/auth-jwt-choice.md` — why JWT over sessions
+- `Decisions/auth-token-storage.md` — where tokens are stored
+- `Decisions/auth-refresh-strategy.md` — how refresh works
+
+Each links to the others and to `[[Projects/my-app]]`.
 
 ---
 

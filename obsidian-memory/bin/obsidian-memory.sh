@@ -24,6 +24,12 @@ set -euo pipefail
 VAULT_DIR="${CLAUDE_MEMORY_VAULT:-$HOME/.claude/memory}"
 MAX_CONTEXT_LINES=200  # Cap total context output
 
+# Hub/index notes — these link to everything and should not be followed during traversal
+HUB_NOTES="Index.md Projects.md Patterns.md Tools.md People.md Preferences.md"
+
+# Max lines for a single atomic note before suggesting a split
+MAX_NOTE_LINES=30
+
 # --- Helpers ---
 
 ensure_vault() {
@@ -36,6 +42,23 @@ ensure_vault() {
 
 note_path() {
   echo "${VAULT_DIR}/${1}"
+}
+
+# Check if a file is a hub/index note (should skip during link traversal)
+is_hub_note() {
+  local rel_path="$1"
+  local basename
+  basename=$(basename "$rel_path")
+  for hub in $HUB_NOTES; do
+    [ "$basename" = "$hub" ] && return 0
+  done
+  return 1
+}
+
+# Extract summary from frontmatter (summary: field)
+extract_summary() {
+  local filepath="$1"
+  { grep -m1 '^summary:' "$filepath" 2>/dev/null || true; } | sed 's/^summary: *//'
 }
 
 # Resolve a wikilink name to a file path (relative to vault)
@@ -63,11 +86,12 @@ extract_links() {
 }
 
 # Rank files by number of matches, return top N filenames (relative to vault)
+# Filename matches get 3x weight so "auth-decision.md" ranks higher for "auth"
 ranked_search() {
   local query="$1"
   local max="${2:-10}"
 
-  # Split query into words, grep for each, count total matches per file
+  # Split query into words
   local words
   IFS=' ' read -ra words <<< "$query"
 
@@ -76,8 +100,16 @@ ranked_search() {
   trap "rm -f '$tmp'" RETURN
 
   for word in "${words[@]}"; do
-    # Case-insensitive grep, count matches per file
+    # Body matches: 1 point each
     grep -ril --include="*.md" "$word" "$VAULT_DIR" 2>/dev/null || true
+    # Filename matches: 3 extra points (so 4 total with the body match)
+    find "$VAULT_DIR" -name "*.md" 2>/dev/null | while IFS= read -r f; do
+      local name
+      name=$(basename "$f" .md)
+      if echo "$name" | grep -qi "$word" 2>/dev/null; then
+        echo "$f"; echo "$f"; echo "$f"
+      fi
+    done
   done | sort | uniq -c | sort -rn | head -"$max" | awk '{print $2}' > "$tmp"
 
   # Convert absolute paths to relative
@@ -115,6 +147,15 @@ cmd_write() {
   full=$(note_path "$path")
   mkdir -p "$(dirname "$full")"
   printf '%s\n' "$content" > "$full"
+
+  # Warn if note is too large for atomic memory
+  local line_count
+  line_count=$(wc -l < "$full")
+  if [ "$line_count" -gt "$MAX_NOTE_LINES" ]; then
+    echo "WARNING: Note '$path' is ${line_count} lines (>${MAX_NOTE_LINES})." >&2
+    echo "Consider splitting into smaller atomic notes linked with [[wikilinks]]." >&2
+    echo "Each note should capture one decision, one pattern, or one concept." >&2
+  fi
 }
 
 cmd_append() {
@@ -219,6 +260,8 @@ $linked"
 
 cmd_context() {
   # Smart context: search + follow links + read, with total size cap
+  # Seed notes (direct keyword matches) get full content.
+  # Linked notes (1 hop away) get summary-only if they have a summary: field.
   local query="${1:?Usage: obsidian-memory.sh context <query> [max]}"
   local max="${2:-5}"
   ensure_vault
@@ -232,8 +275,8 @@ cmd_context() {
     return 0
   fi
 
-  # Step 2: follow links from seed notes (1 level deep) to find related notes
-  local all_files="$seed_files"
+  # Step 2: follow links from seed notes (1 level deep), skipping hub/index notes
+  local linked_files=""
   while IFS= read -r seed; do
     [ -n "$seed" ] || continue
     local seed_full="${VAULT_DIR}/${seed}"
@@ -243,28 +286,32 @@ cmd_context() {
     linked=$(extract_links "$seed_full")
     while IFS= read -r rel; do
       [ -n "$rel" ] || continue
-      # Add if not already in the set
-      if ! echo "$all_files" | grep -qxF "$rel"; then
-        all_files="$all_files
-$rel"
+      # Skip hub/index notes — they link to everything
+      if is_hub_note "$rel"; then continue; fi
+      # Skip if already a seed note
+      if echo "$seed_files" | grep -qxF "$rel" 2>/dev/null; then continue; fi
+      # Add if not already in linked set
+      if [ -z "$linked_files" ] || ! echo "$linked_files" | grep -qxF "$rel" 2>/dev/null; then
+        linked_files="${linked_files:+$linked_files
+}$rel"
       fi
     done <<< "$linked"
   done <<< "$seed_files"
 
-  # Step 3: output with size cap
+  # Step 3: output seed notes with full content
   local total_lines=0
   echo "--- Memory Context for: $query ---"
 
-  # Output seed notes first (they're the most relevant)
   while IFS= read -r file; do
     [ -n "$file" ] || continue
     local full="${VAULT_DIR}/${file}"
     [ -f "$full" ] || continue
+    # Skip hub notes from seed results too
+    if is_hub_note "$file"; then continue; fi
 
     local note_lines
     note_lines=$(wc -l < "$full")
     if [ $((total_lines + note_lines)) -gt "$MAX_CONTEXT_LINES" ]; then
-      # Include truncated version
       local remaining=$((MAX_CONTEXT_LINES - total_lines))
       if [ "$remaining" -gt 5 ]; then
         echo ""
@@ -279,7 +326,39 @@ $rel"
     echo "## $(basename "$file" .md) [from: $file]"
     cat "$full"
     total_lines=$((total_lines + note_lines + 2))
-  done <<< "$all_files"
+  done <<< "$seed_files"
+
+  # Step 4: output linked notes — summary only if available, otherwise first 10 lines
+  if [ -n "$linked_files" ]; then
+    while IFS= read -r file; do
+      [ -n "$file" ] || continue
+      [ "$total_lines" -lt "$MAX_CONTEXT_LINES" ] || break
+      local full="${VAULT_DIR}/${file}"
+      [ -f "$full" ] || continue
+
+      local summary
+      summary=$(extract_summary "$full")
+      if [ -n "$summary" ]; then
+        echo ""
+        echo "## $(basename "$file" .md) [linked, from: $file]"
+        echo "$summary"
+        total_lines=$((total_lines + 3))
+      else
+        # No summary — show first 10 lines as excerpt
+        local excerpt_lines=10
+        local note_lines
+        note_lines=$(wc -l < "$full")
+        if [ "$note_lines" -lt "$excerpt_lines" ]; then excerpt_lines="$note_lines"; fi
+        if [ $((total_lines + excerpt_lines)) -le "$MAX_CONTEXT_LINES" ]; then
+          echo ""
+          echo "## $(basename "$file" .md) [linked, from: $file]"
+          head -"$excerpt_lines" "$full"
+          if [ "$note_lines" -gt "$excerpt_lines" ]; then echo "... (use \$MEM read \"$file\" for full note)"; fi
+          total_lines=$((total_lines + excerpt_lines + 2))
+        fi
+      fi
+    done <<< "$linked_files"
+  fi
 
   echo ""
   echo "--- End Memory Context ---"
