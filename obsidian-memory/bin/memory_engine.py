@@ -31,9 +31,10 @@ HUB_NOTES = frozenset(
 # BM25 column weights: path, title, summary, content
 BM25_WEIGHTS = (1.0, 5.0, 3.0, 1.0)
 
-# Graph traversal decay factors
-FORWARD_DECAY = 0.5
-BACKLINK_DECAY = 0.4
+# PPR parameters
+PPR_ALPHA = 0.3       # restart probability (higher = tighter clusters)
+PPR_ITERATIONS = 10   # convergence iterations
+PPR_TOP_K = 10        # candidates to consider before Steiner pruning
 
 # Module-level FTS5 availability flag (set by get_db)
 _has_fts5 = False
@@ -281,48 +282,202 @@ def search_fallback(conn, query, limit=10):
 # --- Graph traversal ---
 
 
-def get_forward_links(conn, path):
-    return [r[0] for r in conn.execute(
+def get_neighbors(conn, path):
+    """Get all neighbors (forward links + backlinks), excluding hubs."""
+    forward = [r[0] for r in conn.execute(
         "SELECT target FROM links WHERE source = ?", (path,)
     ).fetchall()]
-
-
-def get_backlinks(conn, path):
-    return [r[0] for r in conn.execute(
+    backward = [r[0] for r in conn.execute(
         "SELECT source FROM links WHERE target = ?", (path,)
     ).fetchall()]
+    return [n for n in set(forward + backward) if not is_hub_note(n)]
+
+
+def personalized_pagerank(conn, seeds):
+    """
+    Personalized PageRank with restart on seed nodes.
+
+    Walks the bidirectional link graph, teleporting back to seeds with
+    probability alpha. Degree normalization is built in — hubs spread
+    their score thinly across many edges, so they naturally rank lower.
+
+    On tiny graphs (<=2 non-hub nodes), skips iteration and returns
+    normalized seed scores directly — PPR adds no value when there's
+    nothing to explore.
+    """
+    if not seeds:
+        return {}
+
+    # Normalize BM25 scores to a probability distribution over seeds
+    max_bm25 = max(abs(s) for _, s in seeds) or 1.0
+    seed_scores = {}
+    total = 0.0
+    for path, bm25_score in seeds:
+        s = abs(bm25_score) / max_bm25
+        seed_scores[path] = s
+        total += s
+    if total > 0:
+        seed_scores = {p: s / total for p, s in seed_scores.items()}
+
+    # Skip iteration if there are no links to walk
+    link_count = conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+    if link_count == 0:
+        return dict(seed_scores)
+
+    # Initialize scores at seed distribution
+    scores = dict(seed_scores)
+
+    # Pre-fetch neighbor lists for all nodes we might visit
+    # (avoids repeated SQL queries during iteration)
+    neighbor_cache = {}
+
+    for _ in range(PPR_ITERATIONS):
+        new_scores = {}
+
+        # Restart component: teleport back to seeds
+        for path, s in seed_scores.items():
+            new_scores[path] = new_scores.get(path, 0.0) + PPR_ALPHA * s
+
+        # Walk component: spread (1-alpha) of each node's score to neighbors
+        for node, score in scores.items():
+            if score < 1e-6:
+                continue
+
+            if node not in neighbor_cache:
+                neighbor_cache[node] = get_neighbors(conn, node)
+            neighbors = neighbor_cache[node]
+
+            if not neighbors:
+                # Dead end — return score to seeds (absorbing)
+                for path, s in seed_scores.items():
+                    new_scores[path] = new_scores.get(path, 0.0) + (1 - PPR_ALPHA) * score * s
+                continue
+
+            share = (1 - PPR_ALPHA) * score / len(neighbors)
+            for neighbor in neighbors:
+                new_scores[neighbor] = new_scores.get(neighbor, 0.0) + share
+
+        scores = new_scores
+
+    return scores
+
+
+def steiner_tree(conn, seed_paths, candidates):
+    """
+    Approximate Steiner tree: find minimum connecting subgraph through candidates.
+
+    Given seed nodes and PPR-scored candidates, find the notes that sit on
+    shortest paths between seeds. These connecting nodes are the most
+    valuable context — they explain how seeds relate to each other.
+
+    Uses BFS from each seed restricted to the candidate set. Returns the
+    set of nodes on the tree (seeds + connectors).
+
+    On small inputs (0-1 seeds, or no candidates beyond seeds), returns
+    seeds directly — there's nothing to connect.
+    """
+    seeds = list(seed_paths)
+    if len(seeds) <= 1:
+        return set(seeds)
+
+    # Build adjacency restricted to candidates + seeds
+    node_set = set(candidates) | set(seeds)
+    adj = {}
+    for node in node_set:
+        neighbors = get_neighbors(conn, node)
+        adj[node] = [n for n in neighbors if n in node_set]
+
+    # BFS from a node within the restricted graph, return parent map
+    def bfs(start):
+        visited = {start: None}
+        queue = [start]
+        qi = 0
+        while qi < len(queue):
+            current = queue[qi]
+            qi += 1
+            for neighbor in adj.get(current, []):
+                if neighbor not in visited:
+                    visited[neighbor] = current
+                    queue.append(neighbor)
+        return visited
+
+    # Greedily connect seeds: start with first seed, connect nearest unconnected seed
+    tree_nodes = {seeds[0]}
+    connected = {seeds[0]}
+    remaining = set(seeds[1:])
+
+    while remaining:
+        best_path = None
+        best_target = None
+        best_len = float("inf")
+
+        # BFS from each connected node to find nearest remaining seed
+        # For efficiency, do one BFS from each tree node and cache
+        for tree_node in list(connected):
+            parents = bfs(tree_node)
+            for target in remaining:
+                if target in parents:
+                    # Reconstruct path
+                    path = []
+                    current = target
+                    while current is not None:
+                        path.append(current)
+                        current = parents[current]
+                    if len(path) < best_len:
+                        best_len = len(path)
+                        best_path = path
+                        best_target = target
+
+        if best_path is None:
+            # Remaining seeds unreachable — add them directly
+            tree_nodes.update(remaining)
+            break
+
+        tree_nodes.update(best_path)
+        connected.update(best_path)
+        remaining.discard(best_target)
+
+    return tree_nodes
 
 
 def build_context_graph(conn, seeds):
     """
-    Bidirectional expansion with convergence scoring.
+    PPR + Steiner hybrid for context selection.
 
-    Seeds get normalized BM25 scores. Forward links get seed_score * 0.5,
-    backlinks get seed_score * 0.4. Notes reachable from multiple seeds
-    accumulate score additively — this is the convergence signal that
-    identifies tight clusters.
+    1. Personalized PageRank from seeds — finds the cluster of related notes
+       with degree-normalized scoring (hubs dampened automatically)
+    2. Take top-K PPR candidates
+    3. Steiner tree through those candidates — prunes to the minimum subgraph
+       that connects seeds, keeping only essential linking notes
+    4. Return scores for tree nodes only
+
+    On small graphs this gracefully degrades: PPR returns just the seeds,
+    Steiner returns them as-is. Zero overhead until the graph is big enough
+    to benefit from pruning.
     """
-    scores = {}
-
     if not seeds:
-        return scores
+        return {}
 
-    max_bm25 = max(abs(s) for _, s in seeds) or 1.0
-    for path, bm25_score in seeds:
-        scores[path] = abs(bm25_score) / max_bm25
+    # Step 1: PPR
+    ppr_scores = personalized_pagerank(conn, seeds)
 
-    for seed_path, _ in seeds:
-        seed_score = scores[seed_path]
+    # Filter out hub notes
+    ppr_scores = {p: s for p, s in ppr_scores.items() if not is_hub_note(p)}
 
-        for target in get_forward_links(conn, seed_path):
-            if not is_hub_note(target):
-                scores[target] = scores.get(target, 0) + seed_score * FORWARD_DECAY
+    if not ppr_scores:
+        return {}
 
-        for source in get_backlinks(conn, seed_path):
-            if not is_hub_note(source):
-                scores[source] = scores.get(source, 0) + seed_score * BACKLINK_DECAY
+    # Step 2: Top-K candidates
+    ranked = sorted(ppr_scores.items(), key=lambda x: -x[1])
+    top_k = ranked[:PPR_TOP_K]
+    candidate_paths = [p for p, _ in top_k]
 
-    return scores
+    # Step 3: Steiner tree to prune
+    seed_paths = {p for p, _ in seeds}
+    tree_nodes = steiner_tree(conn, seed_paths, candidate_paths)
+
+    # Step 4: Return only tree nodes with their PPR scores
+    return {p: ppr_scores.get(p, 0.0) for p in tree_nodes if p in ppr_scores}
 
 
 # --- Commands ---
