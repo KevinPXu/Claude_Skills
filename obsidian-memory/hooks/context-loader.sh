@@ -128,7 +128,8 @@ if echo "$RESULTS" | grep -q "^## "; then
   echo "$RESULTS"
 fi
 
-# --- Status line (always visible so user knows the hook fired) ---
+# --- Status line ---
+# stdout: injected into Claude's context
 echo ""
 echo "--- Memory Hook Status ---"
 echo "Vault:    ${VAULT}"
@@ -136,6 +137,9 @@ echo "Keywords: ${KEYWORDS}"
 echo "Notes:    ${NOTE_COUNT} found"
 echo "Session:  prompt #${COUNT}"
 echo "--- End Status ---"
+
+# stderr: visible to the user in their terminal
+echo "[memory] vault=${VAULT##*/} keywords=\"${KEYWORDS}\" notes=${NOTE_COUNT} prompt=#${COUNT}" >&2
 
 # --- Always inject write config so Claude can save without CLAUDE.md instructions ---
 echo ""
