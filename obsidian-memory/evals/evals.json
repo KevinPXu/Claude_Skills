@@ -1,0 +1,23 @@
+{
+  "skill_name": "obsidian-memory",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "ok so we just decided to use PostgreSQL instead of DynamoDB for the user metadata store — the main reason is we need complex queries for the analytics dashboard and DynamoDB scan costs were getting insane. Remember this decision and the reasoning.",
+      "expected_output": "Claude creates an atomic note with the decision and reasoning, includes summary: in frontmatter, links to the project, and confirms what was saved. Does NOT run $MEM init or hardcode vault paths — uses the injected config block commands.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "what do you know about the auth setup for this project? I think we discussed some token storage decisions last time",
+      "expected_output": "Claude uses $MEM search or $MEM context to look up auth-related notes, follows links to find related decisions, and summarizes what it finds. If the hook already injected relevant context, Claude uses that directly instead of running redundant searches.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "we've been going back and forth on this for a while but I think the final answer is: always use server-side rendering for public pages and client-side for authenticated pages. This is the third time we've had this discussion so please save it somewhere I won't forget",
+      "expected_output": "Claude saves this as an atomic note (not appended to a giant decisions file), includes the reasoning about why SSR for public / CSR for authenticated, adds a summary: field, and links it to the project. Since the user mentioned this is a recurring pattern, Claude might also create or link to a Pattern note.",
+      "files": []
+    }
+  ]
+}

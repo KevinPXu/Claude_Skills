@@ -16,55 +16,39 @@ tools: Bash
 # Memory Graph
 
 You have a persistent memory stored as linked markdown files. Notes connect to each
-other with `[[wikilinks]]`, forming a knowledge graph you can search and traverse.
-This memory survives across conversations.
-
-**Helper script**: `~/Claude_Skills/obsidian-memory/bin/obsidian-memory.sh`
-(Referred to as `$MEM` below)
+other with `[[wikilinks]]`, forming a knowledge graph. This memory survives across
+conversations.
 
 ## How It Works
 
-- A global `UserPromptSubmit` hook (`~/.claude/hooks.json`) runs on every prompt. It auto-discovers the nearest vault by walking up from the working directory, searches for relevant memory context, and injects it into the conversation. It also tracks session length and injects save reminders after sustained conversations or exit signals.
-- The setup block below is for **writing** to memory — the hook handles reading automatically.
+A global `UserPromptSubmit` hook runs on every prompt and handles **reading** automatically:
+- Resolves the nearest vault (walks up from cwd to find `.claude/memory/`, falls back to `~/.claude/memory/`)
+- Extracts keywords from the user's prompt and searches for relevant notes
+- Injects matching context into the conversation
+- Injects an **Obsidian Memory Config** block with the resolved vault path and exact commands for writing
 
-## Vault Resolution
+The hook also tracks session length and injects save reminders after sustained
+conversations or when exit signals are detected.
 
-The vault can be project-scoped or global. **Always resolve the vault before any
-memory operation** by running this setup block at the start of a conversation:
+**Your job is writing.** The hook handles reading, vault resolution, and command setup.
+Look for the `--- Obsidian Memory Config ---` block in the conversation — it contains
+the exact `$MEM` path and pre-resolved write commands for the current vault. Use those
+commands directly instead of hardcoding paths.
 
-```bash
-MEM=~/Claude_Skills/obsidian-memory/bin/obsidian-memory.sh
-
-# Resolve vault: walk up from cwd to find nearest .claude/memory/, fall back to global
-VAULT_SEARCH_DIR="$(pwd)"
-while [ "$VAULT_SEARCH_DIR" != "/" ]; do
-  if [ -d "$VAULT_SEARCH_DIR/.claude/memory" ]; then
-    export CLAUDE_MEMORY_VAULT="$VAULT_SEARCH_DIR/.claude/memory"
-    break
-  fi
-  VAULT_SEARCH_DIR="$(dirname "$VAULT_SEARCH_DIR")"
-done
-export CLAUDE_MEMORY_VAULT="${CLAUDE_MEMORY_VAULT:-$HOME/.claude/memory}"
-```
-
-Once `CLAUDE_MEMORY_VAULT` is exported, all `$MEM` commands will use the correct vault
-automatically. Do not hardcode vault paths in commands.
-
-**IMPORTANT:** Never run `$MEM init` to create a new vault. If the setup block above
-doesn't find a vault, ask the user — do not create one.
+Never run `$MEM init`. If no vault exists, ask the user.
 
 ---
 
 ## What to Remember
 
 The purpose of memory is to let future conversations pick up where past ones left off.
-Focus on capturing things that would be painful to re-explain or re-discover:
+Focus on things that would be painful to re-explain or re-discover:
 
 **Save these — they represent reasoning and decisions:**
 - Architectural decisions and *why* they were made ("chose filesystem over API because...")
 - User preferences confirmed through actual usage (not guesses)
 - Workflows and processes that took multiple iterations to get right
-- Project context: tech stack, directory structure, key files, current state
+- Project context: tech stack, key files, current state
 - Corrections — when the user says "no, always do it this way"
 - Debugging insights that required real investigation
 
@@ -72,130 +56,100 @@ Focus on capturing things that would be painful to re-explain or re-discover:
 - Generic facts you already know (language syntax, library docs)
 - One-off commands or throwaway scripts
 - Intermediate steps that led nowhere
-- Things that are obvious from the codebase itself
+- Things obvious from the codebase itself
 
-**The test for whether to save something:** Would a fresh Claude session benefit from
-knowing this before starting work? If yes, save it. If the information is easily
-re-discoverable from the code or conversation, skip it.
+**The test:** Would a fresh Claude session benefit from knowing this before starting work?
+If yes, save it. If it's easily re-discoverable from code or conversation, skip it.
 
 ---
 
 ## How to Think About the Graph
 
-Each note should be **atomic** — one topic, one decision, one project. Connect notes
-with `[[wikilinks]]` so that finding one note leads you to related context.
+Each note should be **atomic** — one decision, one pattern, or one concept. Connect
+notes with `[[wikilinks]]` so finding one note leads to related context.
 
-Think of it like this: when you search for "CS5600", you should find the project note,
-and from there you can follow links to the user's preferences, related patterns, and
-tools they use. The graph gives you a **trail** to follow, not just isolated facts.
+Think of it like this: searching for "weather-app" finds the project note, and from
+there links lead to the user's preferences, related patterns, and tools they use. The
+graph gives you a **trail** to follow, not just isolated facts.
 
-When saving a new note:
+When saving a new note, consider:
 1. What category does this belong to? (Project, Pattern, Tool, Preference, Person)
 2. What existing notes should this link to?
-3. What's the *reasoning* behind this, not just the fact?
+3. What's the *reasoning*, not just the fact?
 
 ---
 
-## Loading Context
+## Saving Notes
 
-When you need to recall something, search first, then follow links:
+Use the commands from the `--- Obsidian Memory Config ---` block injected by the hook.
+Always check if a note already exists before creating one.
 
-```bash
-# Search by keyword — returns notes ranked by relevance
-$MEM context "search terms"
-
-# This does: keyword search → follow [[wikilinks]] 1 level deep → read all hits
-# Output is capped at 200 lines to avoid flooding context
-
-# For targeted lookup:
-$MEM search "topic"         # just filenames
-$MEM read "Projects/X.md"   # read a specific note
-$MEM related "Projects/X.md" 2  # follow links 2 levels deep
-```
-
-**On conversation start:** Determine the project from the working directory, then run
-`$MEM context "<project>"`. If no project match, try `$MEM context "preferences"`.
-Incorporate what you find silently — don't announce that you're loading memory.
-
-**Mid-conversation:** If the user references past work or decisions, search for it.
-Follow links from the results to build a fuller picture.
-
----
-
-## Saving Context
-
-When you learn something worth remembering:
+### Write a new atomic note
 
 ```bash
-# Check if a note already exists
-$MEM search "topic"
+$MEM search "auth decision"   # check for existing notes first
 
-# Create a new note (directories are created automatically)
-$MEM write "Projects/weather-app.md" "---
+$MEM write "Projects/weather-app-auth.md" "---
 tags: [claude-memory, project]
+summary: Weather app chose JWT over session cookies for SPA architecture
 ---
-# Weather App
+# Weather App — Auth Decision
 
-## Decisions
-- React + TypeScript chosen for frontend
-- Reason: user's team already uses React, TS adds safety for API types
-
-## Stack
-- Frontend: React 18, TypeScript, Vite
-- API: OpenWeatherMap (free tier)
+## Decision
+- JWT over session cookies
+- Reason: app is SPA with no server-side rendering
 
 ## Links
-- [[Projects]]
-- [[Preferences]]
-"
+- [[weather-app]]
+- [[Preferences]]"
 
-# Add to an existing note
-$MEM append "Projects/weather-app.md" "## Auth Decision (2026-03-11)
-- Chose JWT over session cookies
-- Reason: app is SPA, no server-side rendering needed
-- [[Patterns]]"
-
-# Connect it to the category index
-$MEM link "Projects.md" "Projects/weather-app.md"
-
-# Link between related notes
-$MEM link "Projects/weather-app.md" "Tools/React.md"
+# Connect to the project index
+$MEM link "Projects.md" "Projects/weather-app-auth.md"
 ```
 
-### Note Format
+### Append to an existing note
 
-**Keep notes atomic** — one decision, one pattern, or one concept per note. If a note
-exceeds ~30 lines, split it. The script warns when notes get too large.
+```bash
+$MEM append "Projects/weather-app-auth.md" "
+## Update (2026-03-12)
+- Added refresh token rotation
+- [[auth-refresh-pattern]]"
+```
 
-Linked notes that aren't direct search hits are loaded as **summaries only** during
-context retrieval. Always include a `summary:` field in frontmatter so linked context
-stays compact.
+### Link related notes
+
+```bash
+$MEM link "Projects/weather-app-auth.md" "Patterns/jwt-pattern.md"
+```
+
+### Note format
+
+Keep notes under ~30 lines. The script warns when notes get too large.
+
+Linked notes that aren't direct search hits are loaded as **summaries only**, so always
+include a `summary:` field in frontmatter:
 
 ```markdown
 ---
 tags: [claude-memory, <category>]
-aliases: [alternate names for search]
 summary: One-line description of what this note captures
 ---
 # Title
 
-## Context / Decisions
-- What was decided and WHY (this is the most valuable part)
-
-## Details
-- Specifics, configurations, key paths
+## Decision / Context
+- What was decided and WHY (the most valuable part)
 
 ## Links
 - [[Related Note]]
 ```
 
-**Example of atomic splitting**: Instead of one "Auth Decisions" note with JWT choice,
-session storage approach, and token refresh strategy, create three notes:
-- `Decisions/auth-jwt-choice.md` — why JWT over sessions
-- `Decisions/auth-token-storage.md` — where tokens are stored
-- `Decisions/auth-refresh-strategy.md` — how refresh works
+**Atomic splitting example**: Instead of one "Auth Decisions" note with JWT choice,
+token storage, and refresh strategy, create three notes:
+- `Projects/auth-jwt-choice.md` — why JWT over sessions
+- `Projects/auth-token-storage.md` — where tokens are stored
+- `Projects/auth-refresh-strategy.md` — how refresh works
 
-Each links to the others and to `[[Projects/my-app]]`.
+Each links to the others and to `[[weather-app]]`.
 
 ---
 
@@ -204,11 +158,11 @@ Each links to the others and to `[[Projects/my-app]]`.
 ```
 $CLAUDE_MEMORY_VAULT/
   Index.md              # Hub — links to all categories
-  Preferences.md        # User prefs: workflow, tools, style
+  Preferences.md        # User prefs, workflow, tools, style
   Projects.md           # Project index
   Projects/<name>.md    # Per-project notes
   Patterns.md           # Pattern index
-  Patterns/<name>.md    # Reusable insights, debugging techniques
+  Patterns/<name>.md    # Reusable insights
   Tools.md              # Tool index
   Tools/<name>.md       # Tool/framework knowledge
   People.md             # People index
@@ -216,33 +170,13 @@ $CLAUDE_MEMORY_VAULT/
 
 ---
 
-## Command Reference
-
-| Command | Description |
-|---|---|
-| `$MEM search <query> [max]` | Keyword search, ranked by relevance |
-| `$MEM context <query> [max]` | Search + follow links + read (smart context) |
-| `$MEM read <path>` | Read a specific note |
-| `$MEM write <path> <content>` | Create/overwrite a note |
-| `$MEM append <path> <content>` | Append to existing note |
-| `$MEM list [folder]` | List notes in a folder |
-| `$MEM link <from> <to>` | Add a `[[wikilink]]` between notes |
-| `$MEM related <path> [depth]` | Follow links from a note (graph traversal) |
-| `$MEM tags <tag>` | Find notes by tag |
-| `$MEM index` | Read the hub note |
-| `$MEM info` | Vault stats |
-| `$MEM init` | Initialize vault structure |
-
----
-
-## Behavior Summary
+## When to Act
 
 | Situation | Action |
 |---|---|
-| Conversation start | `$MEM context "<project>"` based on working directory |
 | User says "remember X" | Save immediately, confirm what was saved |
-| User asks "what do you know" | Search, follow links, summarize |
-| Important decision made | Save the decision AND the reasoning |
-| User corrects you | Update the relevant note, remove wrong info |
-| Memory Save Reminder appears | Ask the user if they'd like to save any insights from this session. **Do not save automatically — wait for the user to confirm.** If they say yes, summarize what you'd save and get approval before writing. |
+| User asks "what do you know about..." | Use `$MEM search` or `$MEM context`, summarize findings |
+| Important decision made | Save the decision AND the reasoning as an atomic note |
+| User corrects you | Update or replace the relevant note |
+| Memory Save Reminder appears | Ask the user if they'd like to save insights. **Do not save automatically** — wait for confirmation. Summarize what you'd save and get approval before writing. |
 | Pattern used 2+ times | Create a Pattern note so it's reusable |
