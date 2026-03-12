@@ -55,7 +55,7 @@ resolve_link() {
 # Extract all [[wikilinks]] from a file, return as resolved paths
 extract_links() {
   local filepath="$1"
-  grep -oP '\[\[\K[^\]]+' "$filepath" 2>/dev/null | while IFS= read -r link; do
+  grep -o '\[\[[^]]*\]\]' "$filepath" 2>/dev/null | sed 's/^\[\[//;s/\]\]$//' | while IFS= read -r link; do
     # Handle [[Name|Display]] format — take the name part
     local name="${link%%|*}"
     resolve_link "$name"
@@ -138,7 +138,7 @@ cmd_list() {
     echo "ERROR: Folder not found: $folder" >&2
     exit 1
   fi
-  find "$full" -maxdepth 1 -name "*.md" -printf '%f\n' 2>/dev/null | sort
+  find "$full" -maxdepth 1 -name "*.md" 2>/dev/null | while IFS= read -r f; do basename "$f"; done | sort
 }
 
 cmd_link() {
@@ -344,6 +344,7 @@ EOF
   # Create category index notes
   for category in Projects Patterns Tools People; do
     mkdir -p "${VAULT_DIR}/${category}"
+    category_lower="$(echo "$category" | tr '[:upper:]' '[:lower:]')"
     cat > "${VAULT_DIR}/${category}.md" << CATEOF
 ---
 tags: [claude-memory, category]
@@ -351,7 +352,7 @@ tags: [claude-memory, category]
 # ${category}
 
 ## Notes
-<!-- Links to ${category,,} notes will be added here -->
+<!-- Links to ${category_lower} notes will be added here -->
 
 ## Links
 - [[Index]]

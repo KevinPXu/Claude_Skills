@@ -15,16 +15,31 @@ tools: Bash
 
 # Memory Graph
 
-You have a persistent memory stored as linked markdown files at `~/.claude/memory/`.
-Notes connect to each other with `[[wikilinks]]`, forming a knowledge graph you can
-search and traverse. This memory survives across conversations.
+You have a persistent memory stored as linked markdown files. Notes connect to each
+other with `[[wikilinks]]`, forming a knowledge graph you can search and traverse.
+This memory survives across conversations.
 
 **Helper script**: `~/Claude_Skills/obsidian-memory/bin/obsidian-memory.sh`
 (Referred to as `$MEM` below)
 
+## Vault Resolution
+
+The vault can be project-scoped or global. **Always resolve the vault before any
+memory operation** by running this setup block at the start of a conversation:
+
 ```bash
 MEM=~/Claude_Skills/obsidian-memory/bin/obsidian-memory.sh
+
+# Use project-local vault if it exists, otherwise fall back to global
+if [ -d ".claude/memory" ]; then
+  export CLAUDE_MEMORY_VAULT="$(pwd)/.claude/memory"
+elif [ -d "$HOME/.claude/memory" ]; then
+  export CLAUDE_MEMORY_VAULT="$HOME/.claude/memory"
+fi
 ```
+
+Once `CLAUDE_MEMORY_VAULT` is exported, all `$MEM` commands will use the correct vault
+automatically. Do not hardcode vault paths in commands.
 
 ---
 
@@ -159,7 +174,7 @@ aliases: [alternate names for search]
 ## Vault Structure
 
 ```
-~/.claude/memory/
+$CLAUDE_MEMORY_VAULT/
   Index.md              # Hub — links to all categories
   Preferences.md        # User prefs: workflow, tools, style
   Projects.md           # Project index
@@ -201,5 +216,5 @@ aliases: [alternate names for search]
 | User asks "what do you know" | Search, follow links, summarize |
 | Important decision made | Save the decision AND the reasoning |
 | User corrects you | Update the relevant note, remove wrong info |
-| Conversation end | Save new insights if any are worth keeping |
+| Memory Save Reminder appears | Ask the user if they'd like to save any insights from this session. **Do not save automatically — wait for the user to confirm.** If they say yes, summarize what you'd save and get approval before writing. |
 | Pattern used 2+ times | Create a Pattern note so it's reusable |

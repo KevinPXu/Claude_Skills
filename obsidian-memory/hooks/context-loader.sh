@@ -3,6 +3,9 @@
 # Triggered on UserPromptSubmit — extracts keywords from the user's prompt
 # and searches the memory vault for relevant context.
 #
+# Also tracks session prompt count and reminds Claude to offer memory saving
+# after a meaningful number of exchanges.
+#
 # Input: JSON on stdin with { "prompt": "...", "cwd": "..." }
 # Output: Relevant memory context to stdout (injected into conversation)
 #
@@ -16,6 +19,19 @@ VAULT="${CLAUDE_MEMORY_VAULT:-$HOME/.claude/memory}"
 # Bail early if vault doesn't exist
 [ -d "$VAULT" ] || exit 0
 
+# --- Session tracking ---
+SESSION_FILE="${VAULT}/.session-count"
+SAVE_REMINDER_THRESHOLD="${OBSIDIAN_MEMORY_REMINDER_THRESHOLD:-10}"
+
+# Increment prompt count
+if [ -f "$SESSION_FILE" ]; then
+  COUNT=$(cat "$SESSION_FILE" 2>/dev/null || echo "0")
+  COUNT=$((COUNT + 1))
+else
+  COUNT=1
+fi
+printf '%s' "$COUNT" > "$SESSION_FILE"
+
 # Read stdin — parse prompt without jq
 # Uses python if available, falls back to sed
 INPUT=$(cat)
@@ -24,8 +40,8 @@ if command -v python3 &>/dev/null; then
   CWD=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null || echo "$PWD")
 else
   # Fallback: extract first quoted value after "prompt":
-  PROMPT=$(echo "$INPUT" | grep -oP '"prompt"\s*:\s*"\K[^"]*' | head -1)
-  CWD=$(echo "$INPUT" | grep -oP '"cwd"\s*:\s*"\K[^"]*' | head -1)
+  PROMPT=$(echo "$INPUT" | sed -n 's/.*"prompt" *: *"\([^"]*\)".*/\1/p' | head -1)
+  CWD=$(echo "$INPUT" | sed -n 's/.*"cwd" *: *"\([^"]*\)".*/\1/p' | head -1)
 fi
 CWD="${CWD:-$PWD}"
 
@@ -57,6 +73,16 @@ fi
 # Only output if we found memory notes
 if echo "$RESULTS" | grep -q "^## "; then
   echo "$RESULTS"
+fi
+
+# After enough exchanges, remind Claude to offer saving
+if [ "$COUNT" -ge "$SAVE_REMINDER_THRESHOLD" ] && [ $((COUNT % SAVE_REMINDER_THRESHOLD)) -eq 0 ]; then
+  echo ""
+  echo "--- Memory Save Reminder ---"
+  echo "This session has had ${COUNT} exchanges. Before the conversation ends,"
+  echo "ask the user: \"Would you like me to save any decisions, insights, or context"
+  echo "from this session to memory?\" Only save if the user confirms."
+  echo "--- End Reminder ---"
 fi
 
 exit 0
