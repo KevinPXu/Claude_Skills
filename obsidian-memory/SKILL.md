@@ -178,5 +178,5 @@ $CLAUDE_MEMORY_VAULT/
 | User asks "what do you know about..." | Use `$MEM search` or `$MEM context`, summarize findings |
 | Important decision made | Save the decision AND the reasoning as an atomic note |
 | User corrects you | Update or replace the relevant note |
-| Memory Save Reminder appears | Ask the user if they'd like to save insights. **Do not save automatically** — wait for confirmation. Summarize what you'd save and get approval before writing. |
+| Memory Save Reminder appears | Present a **numbered list** of saveable items with one-line descriptions. Ask: "Which would you like me to save? (reply with numbers, e.g. 1,3 or 'all' or 'none')". Only save selected items. |
 | Pattern used 2+ times | Create a Pattern note so it's reusable |
