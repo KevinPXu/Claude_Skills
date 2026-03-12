@@ -1,0 +1,114 @@
+{
+  "metadata": {
+    "skill_name": "obsidian-memory",
+    "skill_path": "/home/kevin/Claude_Skills/obsidian-memory",
+    "executor_model": "claude-opus-4-6",
+    "timestamp": "2026-03-11T19:30:00Z",
+    "evals_run": ["remember-decision", "recall-project", "new-project-setup"],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_name": "remember-decision",
+      "configuration": "with_skill",
+      "pass_rate": 1.0,
+      "passed": 5,
+      "failed": 0,
+      "total": 5,
+      "expectations": [
+        {"text": "saved-to-vault", "passed": true, "evidence": "Appended to Projects/Claude-Skills.md with full decision content"},
+        {"text": "captures-reasoning", "passed": true, "evidence": "Includes WHY: portability, no Obsidian dependency, links to reasoning pattern"},
+        {"text": "links-to-project", "passed": true, "evidence": "Appended to existing Claude-Skills.md project note"},
+        {"text": "links-to-pattern", "passed": true, "evidence": "Includes [[Filesystem-Over-API]] wikilink"},
+        {"text": "user-confirmation", "passed": true, "evidence": "Response details what was saved, where, and what it links to"}
+      ]
+    },
+    {
+      "eval_name": "remember-decision",
+      "configuration": "old_skill",
+      "pass_rate": 0.6,
+      "passed": 3,
+      "failed": 2,
+      "total": 5,
+      "expectations": [
+        {"text": "saved-to-vault", "passed": true, "evidence": "Appended to Projects/Claude-Skills.md"},
+        {"text": "captures-reasoning", "passed": false, "evidence": "Only saved bare fact, no reasoning about WHY"},
+        {"text": "links-to-project", "passed": true, "evidence": "Appended to existing project note"},
+        {"text": "links-to-pattern", "passed": false, "evidence": "No link to Filesystem-Over-API pattern"},
+        {"text": "user-confirmation", "passed": true, "evidence": "Brief confirmation"}
+      ]
+    },
+    {
+      "eval_name": "recall-project",
+      "configuration": "with_skill",
+      "pass_rate": 1.0,
+      "passed": 5,
+      "failed": 0,
+      "total": 5,
+      "expectations": [
+        {"text": "found-project-note", "passed": true, "evidence": "Found Projects/Claude-Skills.md as primary result"},
+        {"text": "followed-links", "passed": true, "evidence": "Used graph traversal to discover Preferences, Patterns, Filesystem-Over-API"},
+        {"text": "includes-decisions", "passed": true, "evidence": "Lists all 5 decisions"},
+        {"text": "includes-reasoning", "passed": true, "evidence": "Each decision includes reasoning"},
+        {"text": "mentions-related-context", "passed": true, "evidence": "References Filesystem Over API pattern and user preferences from linked notes"}
+      ]
+    },
+    {
+      "eval_name": "recall-project",
+      "configuration": "old_skill",
+      "pass_rate": 0.4,
+      "passed": 2,
+      "failed": 3,
+      "total": 5,
+      "expectations": [
+        {"text": "found-project-note", "passed": true, "evidence": "Found via keyword search"},
+        {"text": "followed-links", "passed": false, "evidence": "No graph traversal command available"},
+        {"text": "includes-decisions", "passed": true, "evidence": "Lists 4 original decisions"},
+        {"text": "includes-reasoning", "passed": false, "evidence": "Decisions listed as bare facts"},
+        {"text": "mentions-related-context", "passed": false, "evidence": "No reference to linked notes"}
+      ]
+    },
+    {
+      "eval_name": "new-project-setup",
+      "configuration": "with_skill",
+      "pass_rate": 1.0,
+      "passed": 5,
+      "failed": 0,
+      "total": 5,
+      "expectations": [
+        {"text": "created-project-note", "passed": true, "evidence": "Created Projects/Weather-Dashboard.md with frontmatter"},
+        {"text": "includes-tech-stack", "passed": true, "evidence": "All 5 technologies with reasoning"},
+        {"text": "linked-to-index", "passed": true, "evidence": "Linked Projects.md to Weather-Dashboard.md"},
+        {"text": "linked-to-preferences", "passed": true, "evidence": "Note includes [[Preferences]] with bun reference"},
+        {"text": "recognized-existing-pref", "passed": true, "evidence": "Response confirms bun preference from existing Preferences note"}
+      ]
+    },
+    {
+      "eval_name": "new-project-setup",
+      "configuration": "old_skill",
+      "pass_rate": 0.6,
+      "passed": 3,
+      "failed": 2,
+      "total": 5,
+      "expectations": [
+        {"text": "created-project-note", "passed": true, "evidence": "Would create project note"},
+        {"text": "includes-tech-stack", "passed": true, "evidence": "Lists all technologies"},
+        {"text": "linked-to-index", "passed": true, "evidence": "Linked to Projects.md"},
+        {"text": "linked-to-preferences", "passed": false, "evidence": "No link to Preferences note"},
+        {"text": "recognized-existing-pref", "passed": false, "evidence": "No acknowledgment of existing bun preference"}
+      ]
+    }
+  ],
+  "run_summary": {
+    "with_skill": {"pass_rate": 1.0, "passed": 15, "failed": 0, "total": 15},
+    "old_skill": {"pass_rate": 0.53, "passed": 8, "failed": 7, "total": 15},
+    "delta": {
+      "pass_rate": "+0.47"
+    }
+  },
+  "notes": [
+    "New skill's graph traversal (context + related commands) enables discovering connected notes that keyword search alone misses",
+    "New skill's emphasis on 'save the reasoning, not just the fact' consistently produced richer memory entries",
+    "The biggest gap is in recall: old skill found notes but didn't follow links or surface WHY behind decisions"
+  ]
+}

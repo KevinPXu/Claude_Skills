@@ -1,0 +1,20 @@
+{
+  "skill_name": "obsidian-memory",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I just decided to switch from REST API calls to direct filesystem access for the config manager in my Claude Skills project. The reason is that it removes the dependency on Obsidian running and makes the tool portable. Remember this decision.",
+      "expected_output": "Should save a note capturing the decision AND the reasoning, link it to the Claude-Skills project note and relevant patterns, and confirm what was saved."
+    },
+    {
+      "id": 2,
+      "prompt": "What do you know about my Claude Skills project? What decisions have been made so far and why?",
+      "expected_output": "Should search memory, find the Claude-Skills project note, follow links to related notes (Preferences, Patterns/Filesystem-Over-API), and present a summary that includes both decisions and their reasoning."
+    },
+    {
+      "id": 3,
+      "prompt": "I'm starting a new project in ~/weather-dashboard using React, TypeScript, and the OpenWeatherMap API. I want to use Vite for bundling and bun as the package manager since that's what I prefer. Set up the project structure and save the project context for future sessions.",
+      "expected_output": "Should create a new project memory note with the tech stack and decisions, link it to Preferences (where bun preference is stored) and Projects index, and confirm. Should also recognize the bun preference from existing memory."
+    }
+  ]
+}

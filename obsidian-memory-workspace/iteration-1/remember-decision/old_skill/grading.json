@@ -1,0 +1,11 @@
+{
+  "eval_name": "remember-decision",
+  "configuration": "old_skill",
+  "expectations": [
+    {"text": "saved-to-vault", "passed": true, "evidence": "Appended to Projects/Claude-Skills.md"},
+    {"text": "captures-reasoning", "passed": false, "evidence": "Only saved 'Switched from REST API to filesystem access for config manager' — no reasoning about WHY"},
+    {"text": "links-to-project", "passed": true, "evidence": "Appended to the existing project note"},
+    {"text": "links-to-pattern", "passed": false, "evidence": "No link to Filesystem-Over-API pattern, despite it existing in the vault"},
+    {"text": "user-confirmation", "passed": true, "evidence": "Brief confirmation but doesn't detail what was linked"}
+  ]
+}
