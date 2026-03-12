@@ -58,7 +58,7 @@ export CLAUDE_MEMORY_VAULT="$VAULT"
 
 # --- Session tracking ---
 SESSION_FILE="${VAULT}/.session-count"
-SAVE_REMINDER_THRESHOLD="${OBSIDIAN_MEMORY_REMINDER_THRESHOLD:-10}"
+SAVE_REMINDER_THRESHOLD="${OBSIDIAN_MEMORY_REMINDER_THRESHOLD:-5}"
 
 # Increment prompt count
 if [ -f "$SESSION_FILE" ]; then
@@ -79,7 +79,7 @@ IS_EXIT=false
 
 # Slash commands
 case "$PROMPT_LOWER" in
-  /exit|/clear|/quit) IS_EXIT=true ;;
+  /exit|/clear|/quit|/compact) IS_EXIT=true ;;
 esac
 
 # Natural language exit signals (only match short prompts to avoid false positives)
