@@ -14,7 +14,44 @@
 set -euo pipefail
 
 MEM="${OBSIDIAN_MEMORY_SCRIPT:-$HOME/Claude_Skills/obsidian-memory/bin/obsidian-memory.sh}"
-VAULT="${CLAUDE_MEMORY_VAULT:-$HOME/.claude/memory}"
+
+# --- Vault resolution ---
+# If CLAUDE_MEMORY_VAULT is set explicitly, use it.
+# Otherwise, walk up from cwd looking for a .claude/memory/ directory.
+# Fall back to global ~/.claude/memory/ if nothing found.
+resolve_vault() {
+  if [ -n "${CLAUDE_MEMORY_VAULT:-}" ]; then
+    echo "$CLAUDE_MEMORY_VAULT"
+    return
+  fi
+
+  local dir="${1:-$PWD}"
+  while [ "$dir" != "/" ]; do
+    if [ -d "$dir/.claude/memory" ]; then
+      echo "$dir/.claude/memory"
+      return
+    fi
+    dir=$(dirname "$dir")
+  done
+
+  echo "$HOME/.claude/memory"
+}
+
+# Read stdin first so we can use cwd for vault resolution
+INPUT=$(cat)
+if command -v python3 &>/dev/null; then
+  PROMPT=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('prompt',''))" 2>/dev/null || echo "")
+  CWD=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null || echo "$PWD")
+else
+  # Fallback: extract first quoted value after "prompt":
+  PROMPT=$(echo "$INPUT" | sed -n 's/.*"prompt" *: *"\([^"]*\)".*/\1/p' | head -1)
+  CWD=$(echo "$INPUT" | sed -n 's/.*"cwd" *: *"\([^"]*\)".*/\1/p' | head -1)
+fi
+CWD="${CWD:-$PWD}"
+
+# Resolve vault using the actual working directory from the prompt
+VAULT="$(resolve_vault "$CWD")"
+export CLAUDE_MEMORY_VAULT="$VAULT"
 
 # Bail early if vault doesn't exist
 [ -d "$VAULT" ] || exit 0
@@ -32,20 +69,34 @@ else
 fi
 printf '%s' "$COUNT" > "$SESSION_FILE"
 
-# Read stdin — parse prompt without jq
-# Uses python if available, falls back to sed
-INPUT=$(cat)
-if command -v python3 &>/dev/null; then
-  PROMPT=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('prompt',''))" 2>/dev/null || echo "")
-  CWD=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null || echo "$PWD")
-else
-  # Fallback: extract first quoted value after "prompt":
-  PROMPT=$(echo "$INPUT" | sed -n 's/.*"prompt" *: *"\([^"]*\)".*/\1/p' | head -1)
-  CWD=$(echo "$INPUT" | sed -n 's/.*"cwd" *: *"\([^"]*\)".*/\1/p' | head -1)
-fi
-CWD="${CWD:-$PWD}"
-
 if [ -z "$PROMPT" ]; then
+  exit 0
+fi
+
+# --- Detect session-ending signals ---
+PROMPT_LOWER=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]')
+IS_EXIT=false
+
+# Slash commands
+case "$PROMPT_LOWER" in
+  /exit|/clear|/quit) IS_EXIT=true ;;
+esac
+
+# Natural language exit signals (only match short prompts to avoid false positives)
+if [ "${#PROMPT}" -lt 50 ]; then
+  case "$PROMPT_LOWER" in
+    bye|goodbye|"i'm done"|"im done"|"that's all"|"thats all"|"all done"|"wrap up"|"wrapping up"|"signing off"|"log off") IS_EXIT=true ;;
+  esac
+fi
+
+if [ "$IS_EXIT" = true ] && [ "$COUNT" -gt 1 ]; then
+  echo ""
+  echo "--- Memory Save Reminder ---"
+  echo "The user is ending this session (${COUNT} exchanges)."
+  echo "Before proceeding, ask: \"Would you like me to save any decisions, insights,"
+  echo "or context from this session to memory before we wrap up?\""
+  echo "Only save if the user confirms. Do not exit or clear until the user responds."
+  echo "--- End Reminder ---"
   exit 0
 fi
 
