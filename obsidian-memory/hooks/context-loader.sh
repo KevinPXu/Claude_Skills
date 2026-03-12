@@ -138,8 +138,8 @@ echo "Notes:    ${NOTE_COUNT} found"
 echo "Session:  prompt #${COUNT}"
 echo "--- End Status ---"
 
-# stderr: visible to the user in their terminal
-echo "[memory] vault=${VAULT##*/} keywords=\"${KEYWORDS}\" notes=${NOTE_COUNT} prompt=#${COUNT}" >&2
+# Note: hook stdout is injected into Claude's context (not shown to user).
+# The user sees only the statusMessage from hooks.json during execution.
 
 # --- Always inject write config so Claude can save without CLAUDE.md instructions ---
 echo ""
