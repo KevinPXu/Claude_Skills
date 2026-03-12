@@ -121,10 +121,21 @@ if ! echo "$RESULTS" | grep -q "^## " && [ -n "$PROJECT_NAME" ] && [ "$KEYWORDS"
   RESULTS=$("$MEM" context "$PROJECT_NAME" 2>/dev/null || echo "")
 fi
 
-# Only output if we found memory notes
+# Count how many notes were found (context headers contain "[from:" or "[linked,")
+NOTE_COUNT=0
 if echo "$RESULTS" | grep -q "^## "; then
+  NOTE_COUNT=$(echo "$RESULTS" | grep -c "\[from:" || true)
   echo "$RESULTS"
 fi
+
+# --- Status line (always visible so user knows the hook fired) ---
+echo ""
+echo "--- Memory Hook Status ---"
+echo "Vault:    ${VAULT}"
+echo "Keywords: ${KEYWORDS}"
+echo "Notes:    ${NOTE_COUNT} found"
+echo "Session:  prompt #${COUNT}"
+echo "--- End Status ---"
 
 # --- Always inject write config so Claude can save without CLAUDE.md instructions ---
 echo ""
