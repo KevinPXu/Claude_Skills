@@ -14,3 +14,7 @@ tags: [claude-memory, category]
 - [[hook-design]]
 
 - [[atomicity-approach]]
+
+- [[sqlite-engine-migration]]
+
+- [[graph-traversal-algorithm]]

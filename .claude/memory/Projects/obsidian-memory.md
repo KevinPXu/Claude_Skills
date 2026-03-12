@@ -21,3 +21,7 @@ summary: Graph-based persistent memory skill for Claude Code — bash scripts + 
 - [[atomicity-approach]]
 - [[cross-platform-fixes]]
 - [[Projects]]
+
+- [[sqlite-engine-migration]]
+
+- [[graph-traversal-algorithm]]
