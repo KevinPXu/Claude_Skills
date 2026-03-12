@@ -651,7 +651,7 @@ def cmd_related(path, depth="1"):
     for _ in range(depth):
         next_level = []
         for note in current_level:
-            for target in get_forward_links(conn, note):
+            for target in get_neighbors(conn, note):
                 if target not in visited:
                     visited.add(target)
                     next_level.append(target)
