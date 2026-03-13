@@ -11,7 +11,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export CLAUDE_MEMORY_VAULT="${CLAUDE_MEMORY_VAULT:-$HOME/.claude/memory}"
+
+# If CLAUDE_MEMORY_VAULT is not set, walk up from $PWD to find the nearest
+# .claude/memory/ directory (project-local vault). Falls back to ~/.claude/memory.
+if [[ -z "${CLAUDE_MEMORY_VAULT:-}" ]]; then
+  _dir="$PWD"
+  while [[ "$_dir" != "/" ]]; do
+    if [[ -d "$_dir/.claude/memory" ]]; then
+      CLAUDE_MEMORY_VAULT="$_dir/.claude/memory"
+      break
+    fi
+    _dir="$(dirname "$_dir")"
+  done
+  export CLAUDE_MEMORY_VAULT="${CLAUDE_MEMORY_VAULT:-$HOME/.claude/memory}"
+  unset _dir
+fi
 
 if ! command -v python3 &>/dev/null; then
   echo "ERROR: python3 is required but not found." >&2
