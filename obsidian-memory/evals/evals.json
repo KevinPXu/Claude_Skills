@@ -5,19 +5,59 @@
       "id": 1,
       "prompt": "ok so we just decided to use PostgreSQL instead of DynamoDB for the user metadata store — the main reason is we need complex queries for the analytics dashboard and DynamoDB scan costs were getting insane. Remember this decision and the reasoning.",
       "expected_output": "Claude creates an atomic note with the decision and reasoning, includes summary: in frontmatter, links to the project, and confirms what was saved. Does NOT run $MEM init or hardcode vault paths — uses the injected config block commands.",
-      "files": []
+      "files": [],
+      "expectations": [
+        "Claude uses the $MEM write command from the injected config block, not hardcoded paths",
+        "The note includes summary: in YAML frontmatter",
+        "The note is atomic (~30 lines or fewer) and focused on the PostgreSQL decision",
+        "The note includes [[wikilinks]] to related notes",
+        "Claude confirms what was saved back to the user"
+      ]
     },
     {
       "id": 2,
       "prompt": "what do you know about the auth setup for this project? I think we discussed some token storage decisions last time",
       "expected_output": "Claude uses $MEM search or $MEM context to look up auth-related notes, follows links to find related decisions, and summarizes what it finds. If the hook already injected relevant context, Claude uses that directly instead of running redundant searches.",
-      "files": []
+      "files": [],
+      "expectations": [
+        "Claude checks the hook-injected context before running redundant $MEM search commands",
+        "Claude summarizes findings in a user-friendly way, not raw note dumps",
+        "If no auth notes exist, Claude says so rather than hallucinating past conversations"
+      ]
     },
     {
       "id": 3,
       "prompt": "we've been going back and forth on this for a while but I think the final answer is: always use server-side rendering for public pages and client-side for authenticated pages. This is the third time we've had this discussion so please save it somewhere I won't forget",
-      "expected_output": "Claude saves this as an atomic note (not appended to a giant decisions file), includes the reasoning about why SSR for public / CSR for authenticated, adds a summary: field, and links it to the project. Since the user mentioned this is a recurring pattern, Claude might also create or link to a Pattern note.",
-      "files": []
+      "expected_output": "Claude saves this as an atomic note, includes the reasoning about why SSR for public / CSR for authenticated, adds a summary: field, and links it to the project. Since the user mentioned this is a recurring pattern, Claude might also create or link to a Pattern note.",
+      "files": [],
+      "expectations": [
+        "Claude creates an atomic note (not appended to a giant decisions file)",
+        "The note includes the SSR/CSR reasoning, not just the conclusion",
+        "Claude uses $MEM search first to check for existing notes on this topic",
+        "Since the user said 'third time', Claude considers creating a Pattern note or linking to Patterns"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "fix the login bug in the user authentication module",
+      "expected_output": "Hook should NOT inject irrelevant memory context for a coding task with no memory-related keywords. Claude should focus on the coding task, not on memory operations.",
+      "files": [],
+      "expectations": [
+        "Claude focuses on the coding task, not on memory operations",
+        "Hook-injected context is relevant to the prompt OR minimal (config block only)",
+        "Claude does not waste time searching memory for unrelated coding tasks"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "hi",
+      "expected_output": "Minimal hook injection — just the config block, no irrelevant memory context. Claude responds naturally without being derailed by memory system output.",
+      "files": [],
+      "expectations": [
+        "Hook injects minimal context (config block only, no full note content)",
+        "Claude responds naturally to the greeting without discussing memory",
+        "Total hook output is under 1000 characters for a trivial prompt"
+      ]
     }
   ]
 }

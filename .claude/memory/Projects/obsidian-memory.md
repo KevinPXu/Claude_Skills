@@ -1,7 +1,10 @@
 ---
 tags: [claude-memory, project]
 summary: Graph-based persistent memory skill for Claude Code — bash scripts + hook + SKILL.md
+created: 2026-03-13
+updated: 2026-03-13
 ---
+
 # obsidian-memory
 
 ## Architecture
@@ -25,3 +28,10 @@ summary: Graph-based persistent memory skill for Claude Code — bash scripts + 
 - [[sqlite-engine-migration]]
 
 - [[graph-traversal-algorithm]]
+
+## Recent Changes (2026-03-12)
+- [[vault-discovery]] — shell script walks up from $PWD for project-local vaults
+- [[summary-first-loading]] — two-pass context: summaries first, then expand top notes
+- [[staleness-pruning]] — auto-timestamps, decay scoring, prune command
+
+- [[hook-efficiency-audit]]

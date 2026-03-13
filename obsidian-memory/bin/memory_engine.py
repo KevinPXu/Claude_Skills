@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # --- Config ---
@@ -30,6 +31,10 @@ HUB_NOTES = frozenset(
 
 # BM25 column weights: path, title, summary, content
 BM25_WEIGHTS = (1.0, 5.0, 3.0, 1.0)
+
+# Staleness: notes lose this fraction of their score per day since last update.
+# At 0.005, a 30-day-old note keeps ~86% of its score; 180-day keeps ~41%.
+STALENESS_DECAY_PER_DAY = 0.005
 
 # PPR parameters
 PPR_ALPHA = 0.3       # restart probability (higher = tighter clusters)
@@ -63,6 +68,55 @@ def parse_frontmatter(text):
                 val = val[1:-1]
             meta[key] = val
     return meta, body
+
+
+def _now_iso():
+    """Return current UTC date as YYYY-MM-DD."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def ensure_timestamps(content):
+    """
+    Add 'created' and 'updated' to frontmatter if missing; always refresh 'updated'.
+    Creates frontmatter block if the note doesn't have one.
+    Returns the updated content string.
+    """
+    today = _now_iso()
+
+    if not content.startswith("---"):
+        # No frontmatter — wrap content with one
+        return f"---\ncreated: {today}\nupdated: {today}\n---\n{content}"
+
+    end = content.find("\n---", 3)
+    if end == -1:
+        return content
+
+    fm_block = content[3:end]
+    body = content[end + 4:]
+
+    # Parse existing lines, preserving order
+    fm_lines = fm_block.strip().split("\n")
+    has_created = False
+    has_updated = False
+    new_lines = []
+
+    for line in fm_lines:
+        key = line.partition(":")[0].strip()
+        if key == "created":
+            has_created = True
+            new_lines.append(line)
+        elif key == "updated":
+            has_updated = True
+            new_lines.append(f"updated: {today}")
+        else:
+            new_lines.append(line)
+
+    if not has_created:
+        new_lines.append(f"created: {today}")
+    if not has_updated:
+        new_lines.append(f"updated: {today}")
+
+    return f"---\n" + "\n".join(new_lines) + f"\n---\n{body}"
 
 
 def extract_wikilinks(text):
@@ -231,9 +285,27 @@ def sync_index(conn):
 
 
 def escape_fts_query(query):
-    """Quote each word for FTS5 MATCH (literal matching, no operators)."""
-    words = query.split()
-    return " ".join(f'"{w}"' for w in words if w.strip())
+    """Build FTS5 MATCH query with OR logic and prefix matching.
+
+    Each keyword gets a prefix wildcard (deploy -> deploy*) so
+    morphological variants match even when porter stemming falls
+    short (e.g., "deployment" doesn't stem to "deploy" in SQLite's
+    porter). OR matching ensures partial keyword overlap still finds
+    notes — BM25 naturally ranks notes with more matches higher.
+
+    Special FTS5 operator characters are stripped to prevent
+    syntax errors.
+    """
+    # Strip FTS5 operators that could cause syntax errors
+    cleaned = re.sub(r'["*^{}()\[\]:!]', " ", query)
+    words = [w for w in cleaned.split() if w.strip() and w not in ("OR", "AND", "NOT", "NEAR")]
+    if not words:
+        return ""
+    # Use prefix matching for each word to catch morphological variants
+    prefixed = [f"{w}*" for w in words]
+    if len(prefixed) == 1:
+        return prefixed[0]
+    return " OR ".join(prefixed)
 
 
 def search_bm25(conn, query, limit=10):
@@ -251,19 +323,54 @@ def search_bm25(conn, query, limit=10):
             "FROM notes_fts WHERE notes_fts MATCH ? ORDER BY score LIMIT ?",
             (*BM25_WEIGHTS, fts_query, limit),
         ).fetchall()
-        return [(r[0], r[1]) for r in rows]
+        results = [(r[0], r[1]) for r in rows]
+        # Fall back to LIKE search when FTS5 returns nothing — catches
+        # morphological variants that prefix matching misses (e.g.,
+        # "deployment" query matching "Deploy" in content).
+        if not results:
+            return search_fallback(conn, query, limit)
+        return results
     except sqlite3.OperationalError:
         return search_fallback(conn, query, limit)
 
 
+def _extract_roots(words):
+    """Extract candidate search roots from words.
+
+    Strips common English suffixes to catch morphological variants
+    where "deployment" should match "deploy". Returns deduplicated
+    list of original words plus their roots (min 4 chars).
+    """
+    suffixes = ("ment", "tion", "sion", "ness", "ment", "ance", "ence",
+                "able", "ible", "ated", "ting", "ing", "ful", "ous",
+                "ive", "ize", "ise", "ify", "ity", "ally", "ly", "ed",
+                "er", "est", "ure")
+    roots = set(words)
+    for word in words:
+        for suffix in suffixes:
+            if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+                roots.add(word[:-len(suffix)])
+                break
+    return list(roots)
+
+
 def search_fallback(conn, query, limit=10):
-    """LIKE-based fallback when FTS5 is unavailable."""
-    words = query.lower().split()
+    """LIKE-based fallback when FTS5 is unavailable or returns nothing.
+
+    Uses substring matching (%word%) so it catches morphological
+    variants that FTS5 prefix matching misses. Only considers words
+    with 4+ characters to avoid noise from short substrings.
+    Strips common suffixes to find word roots (e.g., "deployment" -> "deploy").
+    """
+    words = [w for w in query.lower().split() if len(w) >= 4]
     if not words:
         return []
 
+    # Include root forms so "deployment" also searches for "deploy"
+    search_terms = _extract_roots(words)
+
     scores = {}
-    for word in words:
+    for word in search_terms:
         pattern = f"%{word}%"
         rows = conn.execute(
             "SELECT path, title FROM notes "
@@ -505,6 +612,7 @@ def cmd_write(path, content):
     ensure_vault()
     full = VAULT_DIR / path
     full.parent.mkdir(parents=True, exist_ok=True)
+    content = ensure_timestamps(content)
     full.write_text(content + "\n")
 
     line_count = content.count("\n") + 1
@@ -525,8 +633,10 @@ def cmd_append(path, content):
     if not full.is_file():
         print(f"ERROR: Note not found: {path} (use 'write' to create)", file=sys.stderr)
         sys.exit(1)
-    with open(full, "a") as f:
-        f.write("\n" + content + "\n")
+    # Update the 'updated' timestamp in frontmatter
+    existing = full.read_text(errors="replace")
+    existing = ensure_timestamps(existing)
+    full.write_text(existing.rstrip("\n") + "\n" + content + "\n")
 
 
 def cmd_list(folder="."):
@@ -565,7 +675,18 @@ def cmd_index():
 
 
 def cmd_context(query, max_seeds="5"):
-    """BM25 search + bidirectional graph expansion + budget-aware output."""
+    """
+    Summary-first context loading.
+
+    Two-pass approach to maximize relevance within the line budget:
+      Pass 1 — Print a compact summary line for every matched note (cheap).
+      Pass 2 — Expand the highest-scoring notes with full content using
+               whatever budget remains after summaries.
+
+    This ensures the caller always sees *all* relevant topics (pass 1) and
+    gets deep detail on the most important ones (pass 2), rather than
+    blowing the budget on the first large note.
+    """
     max_seeds = int(max_seeds)
     ensure_vault()
     conn = get_db()
@@ -583,53 +704,80 @@ def cmd_context(query, max_seeds="5"):
         print(f"No memory notes found for: {query}")
         return
 
-    seed_paths = {p for p, _ in seeds}
+    # Apply staleness decay: reduce scores for notes not recently updated
+    today = datetime.now(timezone.utc)
+    note_cache = {}  # path -> (meta, body, full_content, line_count)
+    for path in list(scores):
+        full = VAULT_DIR / path
+        if not full.is_file():
+            scores.pop(path, None)
+            continue
+        content = full.read_text(errors="replace")
+        meta, body = parse_frontmatter(content)
+        note_cache[path] = (meta, body, content, len(content.split("\n")))
+
+        updated = meta.get("updated", "")
+        if updated:
+            try:
+                updated_date = datetime.strptime(updated, "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+                days_old = (today - updated_date).days
+                decay = max(0.1, 1.0 - STALENESS_DECAY_PER_DAY * days_old)
+                scores[path] *= decay
+            except ValueError:
+                pass  # malformed date, skip decay
+
     ranked = sorted(scores.items(), key=lambda x: -x[1])
 
     total_lines = 0
     print(f"--- Memory Context for: {query} ---")
 
-    for path, score in ranked:
+    # --- Pass 1: summaries for all notes ---
+    print("\n### Summaries\n")
+    total_lines += 3
+    for path, _score in ranked:
+        if path not in note_cache:
+            continue
         if total_lines >= MAX_CONTEXT_LINES:
             break
+        meta, body, _content, _lc = note_cache[path]
+        summary = meta.get("summary", "")
+        if not summary:
+            # Fall back to first non-empty body line as summary
+            for line in body.split("\n"):
+                stripped = line.strip().lstrip("# ").strip()
+                if stripped:
+                    summary = stripped[:120]
+                    break
+        if not summary:
+            summary = "(no summary)"
+        print(f"- **{Path(path).stem}** ({path}): {summary}")
+        total_lines += 1
 
-        full = VAULT_DIR / path
-        if not full.is_file():
-            continue
-
-        content = full.read_text(errors="replace")
-        lines = content.split("\n")
-        note_lines = len(lines)
-        is_seed = path in seed_paths
-
-        if is_seed:
-            if total_lines + note_lines > MAX_CONTEXT_LINES:
-                remaining = MAX_CONTEXT_LINES - total_lines
-                if remaining > 5:
-                    print(f"\n## {Path(path).stem} [from: {path}]")
-                    print("\n".join(lines[:remaining]))
-                    print("... (truncated)")
-                    total_lines += remaining + 2
+    # --- Pass 2: expand top notes with full content ---
+    if total_lines < MAX_CONTEXT_LINES:
+        print("\n### Details\n")
+        total_lines += 3
+        for path, _score in ranked:
+            if path not in note_cache:
+                continue
+            if total_lines >= MAX_CONTEXT_LINES:
+                break
+            _meta, _body, content, note_lines = note_cache[path]
+            remaining = MAX_CONTEXT_LINES - total_lines
+            if remaining < 5:
                 break
             print(f"\n## {Path(path).stem} [from: {path}]")
-            print(content)
-            total_lines += note_lines + 2
-        else:
-            meta, _ = parse_frontmatter(content)
-            summary = meta.get("summary", "")
-
-            if summary:
-                print(f"\n## {Path(path).stem} [linked, from: {path}]")
-                print(summary)
-                total_lines += 3
+            total_lines += 2
+            lines = content.split("\n")
+            if note_lines <= remaining:
+                print(content)
+                total_lines += note_lines
             else:
-                excerpt_lines = min(10, note_lines)
-                if total_lines + excerpt_lines <= MAX_CONTEXT_LINES:
-                    print(f"\n## {Path(path).stem} [linked, from: {path}]")
-                    print("\n".join(lines[:excerpt_lines]))
-                    if note_lines > excerpt_lines:
-                        print(f'... (use $MEM read "{path}" for full note)')
-                    total_lines += excerpt_lines + 2
+                print("\n".join(lines[:remaining]))
+                print("... (truncated)")
+                total_lines += remaining + 1
 
     print("\n--- End Memory Context ---")
 
@@ -749,6 +897,71 @@ def cmd_info():
     print(f"Index:        {VAULT_DIR / DB_NAME}")
 
 
+def cmd_prune(before_date, confirm=""):
+    """
+    List (or delete) notes not updated since a given date.
+
+    Usage:
+      prune 2026-01-01            # list candidates
+      prune 2026-01-01 --confirm  # actually delete them
+    """
+    ensure_vault()
+    try:
+        cutoff = datetime.strptime(before_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        print(f"ERROR: Invalid date format '{before_date}'. Use YYYY-MM-DD.", file=sys.stderr)
+        sys.exit(1)
+
+    do_delete = confirm == "--confirm"
+    candidates = []
+
+    for md in sorted(VAULT_DIR.rglob("*.md")):
+        rel = str(md.relative_to(VAULT_DIR))
+        if rel.startswith(".") or is_hub_note(rel):
+            continue
+
+        content = md.read_text(errors="replace")
+        meta, _ = parse_frontmatter(content)
+        updated = meta.get("updated", meta.get("created", ""))
+
+        if not updated:
+            # No timestamp — use file mtime as fallback
+            mtime = datetime.fromtimestamp(md.stat().st_mtime, tz=timezone.utc)
+            updated_date = mtime
+            updated = mtime.strftime("%Y-%m-%d") + " (from mtime)"
+        else:
+            try:
+                updated_date = datetime.strptime(updated, "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                continue
+
+        if updated_date < cutoff:
+            candidates.append((rel, updated))
+
+    if not candidates:
+        print(f"No notes found with updates before {before_date}.")
+        return
+
+    if do_delete:
+        for rel, updated in candidates:
+            full = VAULT_DIR / rel
+            full.unlink()
+            print(f"  DELETED: {rel} (last updated: {updated})")
+        print(f"\nPruned {len(candidates)} note(s).")
+        # Rebuild index after deletions
+        conn = get_db()
+        sync_index(conn)
+        conn.close()
+    else:
+        print(f"Notes not updated since {before_date}:\n")
+        for rel, updated in candidates:
+            print(f"  {rel}  (last updated: {updated})")
+        print(f"\n{len(candidates)} note(s) found.")
+        print(f"Run with --confirm to delete: prune {before_date} --confirm")
+
+
 def cmd_rebuild():
     """Force-rebuild the SQLite index from markdown files."""
     ensure_vault()
@@ -779,6 +992,7 @@ COMMANDS = {
     "tags": lambda args: cmd_tags(args[0]),
     "init": lambda args: cmd_init(),
     "info": lambda args: cmd_info(),
+    "prune": lambda args: cmd_prune(args[0], *args[1:2]),
     "rebuild": lambda args: cmd_rebuild(),
 }
 
@@ -803,6 +1017,7 @@ def main():
         print("  tags <tag>              Find notes with a given tag")
         print("  init                    Initialize the memory vault")
         print("  info                    Show vault stats")
+        print("  prune <date> [--confirm] List/delete notes not updated since date")
         print("  rebuild                 Force rebuild the SQLite index")
         sys.exit(0)
 

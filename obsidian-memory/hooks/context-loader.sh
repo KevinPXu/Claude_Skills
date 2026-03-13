@@ -108,9 +108,10 @@ fi
 PROJECT_NAME=$(basename "${CWD}" | tr '_-' ' ')
 
 # Extract meaningful keywords from prompt (skip common stop words)
-KEYWORDS=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]' | \
+# Strip apostrophes first so "what's" becomes "whats" not "what" + "s"
+KEYWORDS=$(echo "$PROMPT" | tr -d "'" | tr '[:upper:]' '[:lower:]' | \
   tr -cs '[:alpha:]' '\n' | \
-  grep -vxE '(the|a|an|is|are|was|were|be|been|being|have|has|had|do|does|did|will|would|could|should|may|might|shall|can|need|dare|ought|used|to|of|in|for|on|with|at|by|from|as|into|through|during|before|after|above|below|between|out|off|over|under|again|further|then|once|here|there|when|where|why|how|all|both|each|few|more|most|other|some|such|no|nor|not|only|own|same|so|than|too|very|just|because|but|and|or|if|while|about|it|its|this|that|these|those|i|me|my|we|our|you|your|he|him|his|she|her|they|them|their|what|which|who|whom|let|make|get|go|come|take|know|see|think|look|want|give|use|find|tell|ask|work|seem|feel|try|leave|call|keep|put|run|say|turn|help|show|hear|play|move|live|believe|happen|write|provide|sit|stand|lose|pay|meet|include|continue|set|learn|change|lead|understand|watch|follow|stop|create|speak|read|add|spend|grow|open|walk|win|teach|offer|remember|love|consider|appear|buy|wait|serve|die|send|expect|build|stay|fall|cut|reach|kill|remain|suggest|raise|pass|sell|require|report|decide|pull|develop|file|check|fix|implement|update|refactor|debug|test|commit|push|merge|deploy|install|configure|please|could|would|should|hey|hi|hello|thanks|thank|skills|available|right|now|start|yea|lets|also|want|ok|okay)' | \
+  grep -vxE '(.{1,2}|the|a|an|is|are|was|were|be|been|being|have|has|had|do|does|did|will|would|could|should|may|might|shall|can|need|dare|ought|used|to|of|in|for|on|with|at|by|from|as|into|through|during|before|after|above|below|between|out|off|over|under|again|further|then|once|here|there|when|where|why|how|all|both|each|few|more|most|other|some|such|no|nor|not|only|own|same|so|than|too|very|just|because|but|and|or|if|while|about|it|its|this|that|these|those|i|me|my|we|our|you|your|he|him|his|she|her|they|them|their|what|which|who|whom|let|make|get|go|come|take|know|see|think|look|want|give|use|find|tell|ask|work|seem|feel|try|leave|call|keep|put|run|say|turn|help|show|hear|play|move|live|believe|happen|write|provide|sit|stand|lose|pay|meet|include|continue|set|learn|change|lead|understand|watch|follow|stop|speak|read|add|spend|grow|open|walk|win|teach|offer|remember|love|consider|appear|buy|wait|serve|die|send|expect|stay|fall|cut|reach|kill|remain|suggest|raise|pass|sell|require|report|decide|pull|please|could|would|should|hey|hi|hello|thanks|thank|skills|available|right|now|start|yea|lets|also|want|ok|okay)' | \
   head -5 | tr '\n' ' ' | xargs) || true
 
 if [ -z "$KEYWORDS" ]; then
@@ -119,11 +120,6 @@ fi
 
 # Search memory for relevant context
 RESULTS=$("$MEM" context "$KEYWORDS" 2>/dev/null || echo "")
-
-# If keyword search found nothing, try project name
-if ! echo "$RESULTS" | grep -q "^## " && [ -n "$PROJECT_NAME" ] && [ "$KEYWORDS" != "$PROJECT_NAME" ]; then
-  RESULTS=$("$MEM" context "$PROJECT_NAME" 2>/dev/null || echo "")
-fi
 
 # Count how many notes were found (context headers contain "[from:" or "[linked,")
 NOTE_COUNT=0
@@ -145,18 +141,22 @@ echo "--- End Status ---"
 # Note: hook stdout is injected into Claude's context (not shown to user).
 # The user sees only the statusMessage from hooks.json during execution.
 
-# --- Always inject write config so Claude can save without CLAUDE.md instructions ---
-echo ""
-echo "--- Obsidian Memory Config ---"
-echo "MEM=${MEM}"
-echo "export CLAUDE_MEMORY_VAULT=\"${VAULT}\""
-echo "Save:   CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM write \"<path>\" \"<content>\""
-echo "Append: CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM append \"<path>\" \"<content>\""
-echo "Link:   CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM link \"<from>\" \"<to>\""
-echo "Search: CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM search \"<query>\""
-echo "One decision per note. Link related decisions with [[wikilinks]]. Add summary: to frontmatter."
-echo "Ask user before saving. Never run \$MEM init."
-echo "--- End Config ---"
+# --- Inject write config when notes were found or save reminders triggered ---
+# Skip the full config block on prompts with no memory relevance to save tokens.
+# The obsidian-memory skill will still trigger when needed and can inject config then.
+if [ "$NOTE_COUNT" -gt 0 ] || [ "$COUNT" -ge "$SAVE_REMINDER_THRESHOLD" ]; then
+  echo ""
+  echo "--- Obsidian Memory Config ---"
+  echo "MEM=${MEM}"
+  echo "export CLAUDE_MEMORY_VAULT=\"${VAULT}\""
+  echo "Save:   CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM write \"<path>\" \"<content>\""
+  echo "Append: CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM append \"<path>\" \"<content>\""
+  echo "Link:   CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM link \"<from>\" \"<to>\""
+  echo "Search: CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM search \"<query>\""
+  echo "One decision per note. Link related decisions with [[wikilinks]]. Add summary: to frontmatter."
+  echo "Ask user before saving. Never run \$MEM init."
+  echo "--- End Config ---"
+fi
 
 # After enough exchanges, remind Claude to offer saving
 if [ "$COUNT" -ge "$SAVE_REMINDER_THRESHOLD" ] && [ $((COUNT % SAVE_REMINDER_THRESHOLD)) -eq 0 ]; then
