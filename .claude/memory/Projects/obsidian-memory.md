@@ -35,3 +35,7 @@ updated: 2026-03-13
 - [[staleness-pruning]] — auto-timestamps, decay scoring, prune command
 
 - [[hook-efficiency-audit]]
+
+- [[install-auto-hook-registration]]
+
+- [[install-update-command]]

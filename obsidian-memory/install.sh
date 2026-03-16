@@ -8,7 +8,7 @@ usage() {
   echo ""
   echo "Commands:"
   echo "  (default)              Install skill, hooks, vault, and CLAUDE.md instructions"
-  echo "  update                 Re-sync SKILL.md to ~/.claude/skills/ from source"
+  echo "  update                 Re-sync SKILL.md, ensure hook registered, ensure CLAUDE.md updated"
   echo "  init-vault <path>      Create a project-local vault and add CLAUDE.md instructions"
   echo "                         <path> is the project root (vault goes in <path>/.claude/memory/)"
   echo ""
@@ -75,6 +75,118 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Derive hooks file and vault locations (shared by install and update)
+if [ -n "$HOOKS_PATH" ]; then
+  HOOKS_FILE="$HOOKS_PATH"
+  HOOKS_DIR="$(cd "$(dirname "$HOOKS_PATH")" && pwd)"
+  VAULT_DIR="${HOOKS_DIR}/memory"
+else
+  HOOKS_FILE="${CLAUDE_DIR}/hooks.json"
+  VAULT_DIR="${CLAUDE_MEMORY_VAULT:-${CLAUDE_DIR}/memory}"
+fi
+
+# Derive CLAUDE_MD path (shared by install and update)
+if [ -n "$HOOKS_PATH" ]; then
+  CLAUDE_MD_DIR="$(dirname "$HOOKS_FILE")/.."
+  CLAUDE_MD="$(cd "$CLAUDE_MD_DIR" && pwd)/CLAUDE.md"
+else
+  CLAUDE_MD="${CLAUDE_DIR}/CLAUDE.md"
+fi
+
+# Make scripts executable
+chmod +x "${SCRIPT_DIR}/bin/obsidian-memory.sh"
+chmod +x "${SCRIPT_DIR}/hooks/context-loader.sh"
+
+# Build hook command — set CLAUDE_MEMORY_VAULT so scripts find the right vault
+HOOK_CMD="${SCRIPT_DIR}/hooks/context-loader.sh"
+if [ -n "$HOOKS_PATH" ]; then
+  HOOK_CMD="CLAUDE_MEMORY_VAULT=${VAULT_DIR} ${HOOK_CMD}"
+fi
+
+# Install or merge hook into hooks.json
+install_hook() {
+  local hooks_file="$1"
+  local hook_cmd="$2"
+
+  if [ ! -f "$hooks_file" ]; then
+    mkdir -p "$(dirname "$hooks_file")"
+    echo "Creating hooks.json..."
+    cat > "$hooks_file" << HOOKEOF
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${hook_cmd}",
+            "timeout": 10,
+            "statusMessage": "Loading memory context..."
+          }
+        ]
+      }
+    ]
+  }
+}
+HOOKEOF
+    echo "  Created $hooks_file"
+    return
+  fi
+
+  echo "Existing hooks.json found. Merging..."
+
+  if command -v python3 &>/dev/null; then
+    python3 - "$hooks_file" "$hook_cmd" << 'PYEOF'
+import json, sys
+
+hooks_file, hook_cmd = sys.argv[1], sys.argv[2]
+
+with open(hooks_file) as f:
+    config = json.load(f)
+
+new_hook = {
+    "type": "command",
+    "command": hook_cmd,
+    "timeout": 10,
+    "statusMessage": "Loading memory context..."
+}
+
+if "hooks" not in config:
+    config["hooks"] = {}
+
+ups = config["hooks"].setdefault("UserPromptSubmit", [])
+
+# Check if already registered (idempotent)
+for group in ups:
+    for h in group.get("hooks", []):
+        if h.get("command") == hook_cmd:
+            print("  Hook already registered, skipping.")
+            sys.exit(0)
+
+ups.append({"hooks": [new_hook]})
+
+with open(hooks_file, "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+
+print("  Merged hook into " + hooks_file)
+PYEOF
+  else
+    echo "  python3 not found — add this entry manually under hooks.UserPromptSubmit in $hooks_file:"
+    echo ""
+    echo "  {"
+    echo "    \"hooks\": ["
+    echo "      {"
+    echo "        \"type\": \"command\","
+    echo "        \"command\": \"${hook_cmd}\","
+    echo "        \"timeout\": 10,"
+    echo "        \"statusMessage\": \"Loading memory context...\""
+    echo "      }"
+    echo "    ]"
+    echo "  }"
+  fi
+}
+
 # --- Update command ---
 if [ "$COMMAND" = "update" ]; then
   echo "=== obsidian-memory update ==="
@@ -84,7 +196,12 @@ if [ "$COMMAND" = "update" ]; then
   cp "${SCRIPT_DIR}/SKILL.md" "$SKILL_DIR/SKILL.md"
   echo "  Copied SKILL.md -> $SKILL_DIR/"
   echo ""
-  echo "Done. Hooks and scripts are referenced by path and always use the latest version."
+  echo "Ensuring hook is registered..."
+  install_hook "$HOOKS_FILE" "$HOOK_CMD"
+  echo ""
+  append_claude_md "$CLAUDE_MD"
+  echo ""
+  echo "Done. Scripts are referenced by path and always use the latest version."
   exit 0
 fi
 
@@ -114,16 +231,6 @@ fi
 
 # --- Main install ---
 
-# Derive vault and hooks locations from --hooks-path
-if [ -n "$HOOKS_PATH" ]; then
-  HOOKS_FILE="$HOOKS_PATH"
-  HOOKS_DIR="$(cd "$(dirname "$HOOKS_PATH")" && pwd)"
-  VAULT_DIR="${HOOKS_DIR}/memory"
-else
-  HOOKS_FILE="${CLAUDE_DIR}/hooks.json"
-  VAULT_DIR="${CLAUDE_MEMORY_VAULT:-${CLAUDE_DIR}/memory}"
-fi
-
 echo "=== obsidian-memory installer ==="
 echo ""
 echo "Scope: $([ -n "$HOOKS_PATH" ] && echo "project (${HOOKS_DIR})" || echo "global (~/.claude)")"
@@ -135,63 +242,8 @@ mkdir -p "$SKILL_DIR"
 cp "${SCRIPT_DIR}/SKILL.md" "$SKILL_DIR/SKILL.md"
 echo "  Installed SKILL.md -> $SKILL_DIR/"
 
-# Make scripts executable
-chmod +x "${SCRIPT_DIR}/bin/obsidian-memory.sh"
-chmod +x "${SCRIPT_DIR}/hooks/context-loader.sh"
-
-# Build hook command — set CLAUDE_MEMORY_VAULT so scripts find the right vault
-HOOK_CMD="${SCRIPT_DIR}/hooks/context-loader.sh"
-if [ -n "$HOOKS_PATH" ]; then
-  HOOK_CMD="CLAUDE_MEMORY_VAULT=${VAULT_DIR} ${HOOK_CMD}"
-fi
-
-# Install hooks config
-if [ -f "$HOOKS_FILE" ]; then
-  echo ""
-  echo "Existing hooks.json found at $HOOKS_FILE"
-  echo "To add the memory hook manually, add this entry under hooks.UserPromptSubmit:"
-  echo ""
-  echo "  {"
-  echo "    \"hooks\": ["
-  echo "      {"
-  echo "        \"type\": \"command\","
-  echo "        \"command\": \"${HOOK_CMD}\","
-  echo "        \"timeout\": 10,"
-  echo "        \"statusMessage\": \"Loading memory context...\""
-  echo "      }"
-  echo "    ]"
-  echo "  }"
-else
-  mkdir -p "$(dirname "$HOOKS_FILE")"
-  echo "Creating hooks.json..."
-  cat > "$HOOKS_FILE" << HOOKEOF
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${HOOK_CMD}",
-            "timeout": 10,
-            "statusMessage": "Loading memory context..."
-          }
-        ]
-      }
-    ]
-  }
-}
-HOOKEOF
-  echo "  Created $HOOKS_FILE"
-fi
-
-# Add key instructions to CLAUDE.md
-if [ -n "$HOOKS_PATH" ]; then
-  CLAUDE_MD_DIR="$(dirname "$HOOKS_FILE")/.."
-  CLAUDE_MD="$(cd "$CLAUDE_MD_DIR" && pwd)/CLAUDE.md"
-else
-  CLAUDE_MD="${CLAUDE_DIR}/CLAUDE.md"
-fi
+echo ""
+install_hook "$HOOKS_FILE" "$HOOK_CMD"
 
 append_claude_md "$CLAUDE_MD"
 

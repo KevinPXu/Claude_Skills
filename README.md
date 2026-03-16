@@ -48,13 +48,13 @@ The global hook auto-discovers project-local vaults by walking up from the worki
 
 #### Update after source changes
 
-The only installed file that's a copy (not a path reference) is `SKILL.md`. After editing it:
+Run after pulling new changes or on a system where the hook wasn't auto-registered:
 
 ```bash
 ./install.sh update
 ```
 
-Hooks and scripts are referenced by path from the source repo and always use the latest version.
+This re-syncs `SKILL.md`, ensures the hook is registered in `hooks.json` (merging if needed), and ensures `CLAUDE.md` has memory instructions. Hooks and scripts are referenced by path from the source repo and always use the latest version. Safe to re-run — all steps are idempotent.
 
 #### Vault resolution order
 
