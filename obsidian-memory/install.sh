@@ -125,6 +125,18 @@ install_hook() {
     cat > "$hooks_file" << HOOKEOF
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${hook_cmd}",
+            "timeout": 10,
+            "statusMessage": "Loading memory vault..."
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -155,46 +167,53 @@ hooks_file, hook_cmd = sys.argv[1], sys.argv[2]
 with open(hooks_file) as f:
     config = json.load(f)
 
-new_hook = {
+if "hooks" not in config:
+    config["hooks"] = {}
+
+def ensure_registered(event, hook_entry):
+    groups = config["hooks"].setdefault(event, [])
+    for group in groups:
+        for h in group.get("hooks", []):
+            if h.get("command") == hook_entry["command"]:
+                return False  # already registered
+    groups.append({"hooks": [hook_entry]})
+    return True
+
+session_hook = {
+    "type": "command",
+    "command": hook_cmd,
+    "timeout": 10,
+    "statusMessage": "Loading memory vault..."
+}
+prompt_hook = {
     "type": "command",
     "command": hook_cmd,
     "timeout": 10,
     "statusMessage": "Loading memory context..."
 }
 
-if "hooks" not in config:
-    config["hooks"] = {}
+added_session = ensure_registered("SessionStart", session_hook)
+added_prompt = ensure_registered("UserPromptSubmit", prompt_hook)
 
-ups = config["hooks"].setdefault("UserPromptSubmit", [])
-
-# Check if already registered (idempotent)
-for group in ups:
-    for h in group.get("hooks", []):
-        if h.get("command") == hook_cmd:
-            print("  Hook already registered, skipping.")
-            sys.exit(0)
-
-ups.append({"hooks": [new_hook]})
+if not added_session and not added_prompt:
+    print("  Hook already registered for both events, skipping.")
+    sys.exit(0)
 
 with open(hooks_file, "w") as f:
     json.dump(config, f, indent=2)
     f.write("\n")
 
-print("  Merged hook into " + hooks_file)
+events = []
+if added_session:
+    events.append("SessionStart")
+if added_prompt:
+    events.append("UserPromptSubmit")
+print("  Merged hook into " + hooks_file + " (" + ", ".join(events) + ")")
 PYEOF
   else
-    echo "  python3 not found — add this entry manually under hooks.UserPromptSubmit in $hooks_file:"
+    echo "  python3 not found — add entries manually under hooks.SessionStart and hooks.UserPromptSubmit in $hooks_file:"
     echo ""
-    echo "  {"
-    echo "    \"hooks\": ["
-    echo "      {"
-    echo "        \"type\": \"command\","
-    echo "        \"command\": \"${hook_cmd}\","
-    echo "        \"timeout\": 10,"
-    echo "        \"statusMessage\": \"Loading memory context...\""
-    echo "      }"
-    echo "    ]"
-    echo "  }"
+    echo "  { \"type\": \"command\", \"command\": \"${hook_cmd}\", \"timeout\": 10 }"
   fi
 }
 

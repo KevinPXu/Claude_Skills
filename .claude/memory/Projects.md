@@ -20,3 +20,7 @@ tags: [claude-memory, category]
 - [[graph-traversal-algorithm]]
 
 - [[claude-md-behavioral-instruction]]
+
+- [[session-start-hook]]
+
+- [[auto-memory-vault-pointer]]

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Hook: context-loader.sh
-# Triggered on UserPromptSubmit — extracts keywords from the user's prompt
-# and searches the memory vault for relevant context.
+# Triggered on SessionStart and UserPromptSubmit.
 #
-# Also tracks session prompt count and reminds Claude to offer memory saving
-# after a meaningful number of exchanges.
+# SessionStart: ensures a vault pointer exists in the project's built-in
+#   auto-memory (so vault survives /clear), then injects vault config.
+# UserPromptSubmit: extracts keywords from the user's prompt, searches the
+#   vault for relevant context, and tracks session length for save reminders.
 #
 # Input: JSON on stdin with { "prompt": "...", "cwd": "..." }
 # Output: Relevant memory context to stdout (injected into conversation)
@@ -56,6 +57,35 @@ export CLAUDE_MEMORY_VAULT="$VAULT"
 # Bail early if vault doesn't exist
 [ -d "$VAULT" ] || exit 0
 
+# --- Ensure vault pointer in project auto-memory ---
+# Creates a persistent obsidian-vault.md stub + MEMORY.md entry so the vault
+# survives /clear. Runs at both SessionStart and UserPromptSubmit (idempotent).
+_ensure_vault_pointer() {
+  local vault="$1"
+  local cwd="$2"
+
+  local project_key
+  project_key=$(echo "$cwd" | tr '/' '-')
+  local auto_memory_dir="$HOME/.claude/projects/$project_key/memory"
+
+  [ -d "$auto_memory_dir" ] || return 0
+
+  local stub_path="$auto_memory_dir/obsidian-vault.md"
+  local memory_index="$auto_memory_dir/MEMORY.md"
+
+  # Write/refresh stub if missing or vault path changed
+  if [ ! -f "$stub_path" ] || ! grep -qF "$vault" "$stub_path" 2>/dev/null; then
+    printf -- '---\nname: obsidian-vault\ndescription: Obsidian memory vault at %s — always search here for code reviews, project decisions, and past context\ntype: reference\n---\n\nVault path: %s\nSearch with: $MEM search <query>\n' "$vault" "$vault" > "$stub_path"
+  fi
+
+  # Add MEMORY.md entry if missing
+  if [ -f "$memory_index" ] && ! grep -qF "[obsidian-vault.md]" "$memory_index" 2>/dev/null; then
+    printf -- '\n- [obsidian-vault.md](obsidian-vault.md) - Obsidian memory vault at %s — always search here for code reviews, project decisions, and past context\n' "$vault" >> "$memory_index"
+  fi
+}
+
+_ensure_vault_pointer "$VAULT" "$CWD" 2>/dev/null || true
+
 # --- Session tracking ---
 SESSION_FILE="${VAULT}/.session-count"
 SAVE_REMINDER_THRESHOLD="${OBSIDIAN_MEMORY_REMINDER_THRESHOLD:-5}"
@@ -69,7 +99,16 @@ else
 fi
 printf '%s' "$COUNT" > "$SESSION_FILE"
 
+# SessionStart: no prompt — inject vault config so Claude knows vault is available
 if [ -z "$PROMPT" ]; then
+  echo ""
+  echo "--- Obsidian Memory Config ---"
+  echo "Vault: ${VAULT}"
+  echo "MEM=${MEM}"
+  echo "Save:   CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM write \"<path>\" \"<content>\""
+  echo "Search: CLAUDE_MEMORY_VAULT=\"${VAULT}\" \$MEM search \"<query>\""
+  echo "One decision per note. Add summary: to frontmatter."
+  echo "--- End Config ---"
   exit 0
 fi
 
