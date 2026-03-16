@@ -32,8 +32,17 @@ append_claude_md() {
   local claude_md="$1"
   local memory_marker="## Obsidian Memory"
 
+  local behavioral_marker="## Relevant Memory Notes"
+
   if [ -f "$claude_md" ] && grep -qF "$memory_marker" "$claude_md" 2>/dev/null; then
-    echo "CLAUDE.md already has memory instructions, skipping."
+    # Section exists — check if behavioral instruction is missing and patch it in
+    if ! grep -qF "$behavioral_marker" "$claude_md" 2>/dev/null; then
+      echo "Patching missing behavioral instruction in CLAUDE.md..."
+      printf '\nWhen the hook injects a `%s` section, always read the matched notes and surface relevant context before responding.\n' "$behavioral_marker" >> "$claude_md"
+      echo "  Updated $claude_md"
+    else
+      echo "CLAUDE.md already has memory instructions, skipping."
+    fi
     return
   fi
 
@@ -46,6 +55,8 @@ append_claude_md() {
 ${memory_marker}
 
 This project uses obsidian-memory for persistent context across conversations. A global \`UserPromptSubmit\` hook automatically loads relevant memory and injects write commands on every prompt. See the "Obsidian Memory Config" block in hook output for available commands.
+
+When the hook injects a \`## Relevant Memory Notes\` section, always read the matched notes and surface relevant context before responding.
 CLAUDEEOF
   echo "  Updated $claude_md"
 }

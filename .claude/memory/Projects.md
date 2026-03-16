@@ -18,3 +18,5 @@ tags: [claude-memory, category]
 - [[sqlite-engine-migration]]
 
 - [[graph-traversal-algorithm]]
+
+- [[claude-md-behavioral-instruction]]

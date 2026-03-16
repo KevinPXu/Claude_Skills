@@ -19,6 +19,13 @@ Existing users who installed before auto-merge existed would still have missing 
 ## Structural Change
 HOOKS_FILE, CLAUDE_MD, HOOK_CMD derivation and install_hook() function were moved above both the update and main install blocks so both commands share the same logic.
 
+## Update (2026-03-16)
+append_claude_md() now also patches existing CLAUDE.md files that have the
+`## Obsidian Memory` section but are missing the behavioral instruction line
+("When the hook injects a `## Relevant Memory Notes` section..."). Previously
+it would silently skip any file that already had the section header.
+
 ## Links
 - [[obsidian-memory]]
 - [[install-auto-hook-registration]]
+- [[claude-md-behavioral-instruction]]
