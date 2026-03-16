@@ -125,6 +125,9 @@ RESULTS=$("$MEM" context "$KEYWORDS" 2>/dev/null || echo "")
 NOTE_COUNT=0
 if echo "$RESULTS" | grep -q "^## "; then
   NOTE_COUNT=$(echo "$RESULTS" | grep -c "\[from:" || true)
+  echo ""
+  echo "## Relevant Memory Notes"
+  echo ""
   echo "$RESULTS"
 fi
 
