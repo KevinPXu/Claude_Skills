@@ -3,13 +3,16 @@ name: obsidian-memory
 description: >
   Persistent memory graph for Claude — stores decisions, reasoning, preferences, and
   project context as linked markdown notes so they survive across conversations. Use this
-  skill whenever the user says "remember this", "save this", "what do you know about",
-  "last time we discussed", "what did we decide", or asks to recall anything from a
-  previous session. Also use when starting work in a project directory (to load project
-  context), when the user corrects a recurring mistake, when important architectural
-  decisions are made, or when wrapping up a conversation that produced reusable insights.
-  If in doubt about whether to save something, lean toward saving it — forgetting is
-  worse than a few extra notes.
+  skill whenever the user wants to save context for future sessions (phrases like
+  "remember this", "save this", "note for future reference", "keep this in mind",
+  "I always want", "I prefer") or asks to recall past context (phrases like "what did
+  we decide", "remind me what we settled on", "what context do you have about", "last
+  time we discussed", "what do you know about", "what was the conclusion"). Also use
+  when starting work in a project directory (to load project context), when the user
+  corrects a recurring mistake, when important architectural decisions are made, when
+  the same issue comes up repeatedly, or when wrapping up a conversation that produced
+  reusable insights. If in doubt about whether to save something, lean toward saving it
+  — forgetting is worse than a few extra notes.
 tools: Bash
 ---
 
@@ -23,17 +26,18 @@ conversations.
 
 A global `UserPromptSubmit` hook runs on every prompt and handles **reading** automatically:
 - Resolves the nearest vault (walks up from cwd to find `.claude/memory/`, falls back to `~/.claude/memory/`)
-- Extracts keywords from the user's prompt and searches for relevant notes
-- Injects matching context into the conversation
-- Injects an **Obsidian Memory Config** block with the resolved vault path and exact commands for writing
-
-The hook also tracks session length and injects save reminders after sustained
-conversations or when exit signals are detected.
+- Extracts keywords from the user's prompt and runs a **BM25 search + graph traversal** across the vault
+- Injects matching notes (full content for seed matches, summaries for linked notes) into the conversation
+- Injects an **Obsidian Memory Config** block **only when notes match or a save reminder is due** — not on every prompt, to save tokens
+- Tracks session length and injects save reminders every 5 exchanges and on exit signals (`/clear`, `/exit`, "bye", etc.)
 
 **Your job is writing.** The hook handles reading, vault resolution, and command setup.
-Look for the `--- Obsidian Memory Config ---` block in the conversation — it contains
-the exact `$MEM` path and pre-resolved write commands for the current vault. Use those
-commands directly instead of hardcoding paths.
+When the `--- Obsidian Memory Config ---` block appears, it contains the exact `$MEM` path
+and pre-resolved commands for the current vault. Use those commands directly — never
+hardcode vault paths.
+
+If no config block appears, it means no relevant notes were found and you're not at a
+save-reminder checkpoint. You can still run `$MEM search <query>` manually if needed.
 
 Never run `$MEM init`. If no vault exists, ask the user.
 
@@ -83,6 +87,15 @@ When saving a new note, consider:
 
 Use the commands from the `--- Obsidian Memory Config ---` block injected by the hook.
 Always check if a note already exists before creating one.
+
+### Recall
+
+Use these whether or not the `--- Obsidian Memory Config ---` block is present — `$MEM` is a standalone CLI, not hook-dependent. If you don't have the `$MEM` path from the config block, use `~/.claude/hooks/mem` directly.
+
+```bash
+$MEM context "auth decisions"   # preferred: follows [[wikilinks]] to load related notes too
+$MEM search "auth"              # keyword-only, no graph traversal
+```
 
 ### Write a new atomic note
 

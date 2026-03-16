@@ -2,8 +2,9 @@
 tags: [claude-memory, project]
 summary: Graph-based persistent memory skill for Claude Code — bash scripts + hook + SKILL.md
 created: 2026-03-13
-updated: 2026-03-13
+updated: 2026-03-16
 ---
+
 
 # obsidian-memory
 
@@ -39,3 +40,10 @@ updated: 2026-03-13
 - [[install-auto-hook-registration]]
 
 - [[install-update-command]]
+
+- [[python-hook-audit]]
+
+## Recent Changes (2026-03-16)
+- [[python-hook-audit]] — description updated with 3 missing trigger patterns
+- [[skill-creator-eval-limitation]] — description opt loop can't work for installed skills
+- Description now covers: "note for future reference", "remind me what we settled on", "what context do you have about"

@@ -10,3 +10,7 @@ tags: [claude-memory, category]
 - [[Index]]
 
 - [[cross-platform-bash]]
+
+- [[skill-over-explanation-pattern]]
+
+- [[skill-creator-eval-limitation]]

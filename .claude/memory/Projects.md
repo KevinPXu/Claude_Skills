@@ -24,3 +24,5 @@ tags: [claude-memory, category]
 - [[session-start-hook]]
 
 - [[auto-memory-vault-pointer]]
+
+- [[python-hook-audit]]
